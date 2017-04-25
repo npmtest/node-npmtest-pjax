@@ -5,7 +5,7 @@
 /*
 assets.app.js
 
-#### test coverage for [pjax (v0.2.4)](https://github.com/MoOx/pjax#readme) [![npm package](https://img.shields.io/npm/v/npmtest-pjax.svg?style=flat-square)](https://www.npmjs.org/package/npmtest-pjax) [![travis-ci.org build-status](https://api.travis-ci.org/npmtest/node-npmtest-pjax.svg)](https://travis-ci.org/npmtest/node-npmtest-pjax)
+#### basic test coverage for [pjax (v0.2.4)](https://github.com/MoOx/pjax#readme) [![npm package](https://img.shields.io/npm/v/npmtest-pjax.svg?style=flat-square)](https://www.npmjs.org/package/npmtest-pjax) [![travis-ci.org build-status](https://api.travis-ci.org/npmtest/node-npmtest-pjax.svg)](https://travis-ci.org/npmtest/node-npmtest-pjax)
 
 instruction
     1. save this script as assets.app.js
@@ -79,7 +79,7 @@ instruction
 
 
 
-    // run shared js-env code - pre-init
+    // run shared js-env code - init-before
     (function () {
         // init local
         local = {};
@@ -117,7 +117,7 @@ instruction
 
 
 
-    // run shared js-env code - pre-function
+    // run shared js-env code - function-before
     /* istanbul ignore next */
     (function () {
         local.assert = function (passed, message) {
@@ -148,17 +148,12 @@ instruction
             if (!module || module === '.' || module.indexOf('/') >= 0) {
                 return require('path').resolve(process.cwd(), module || '');
             }
-            // search builtin
-            if (Object.keys(process.binding('natives')).indexOf(module) >= 0) {
-                return module;
-            }
             // search modulePathList
-            [
-                ['node_modules'],
-                modulePathList,
-                require('module').globalPaths
-            ].some(function (modulePathList) {
-                modulePathList.some(function (modulePath) {
+            ['node_modules']
+                .concat(modulePathList)
+                .concat(require('module').globalPaths)
+                .concat([process.env.HOME + '/node_modules', '/usr/local/lib/node_modules'])
+                .some(function (modulePath) {
                     try {
                         tmp = require('path').resolve(process.cwd(), modulePath + '/' + module);
                         result = require('fs').statSync(tmp).isDirectory() && tmp;
@@ -166,8 +161,6 @@ instruction
                     } catch (ignore) {
                     }
                 });
-                return result;
-            });
             return result || '';
         };
 
@@ -322,11 +315,29 @@ instruction
                 return String(value);
             });
         };
+
+        local.tryCatchOnError = function (fnc, onError) {
+        /*
+         * this function will try to run the fnc in a try-catch block,
+         * else call onError with the errorCaught
+         */
+            // validate onError
+            local.assert(typeof onError === 'function', typeof onError);
+            try {
+                // reset errorCaught
+                local._debugTryCatchErrorCaught = null;
+                return fnc();
+            } catch (errorCaught) {
+                // debug errorCaught
+                local._debugTryCatchErrorCaught = errorCaught;
+                return onError(errorCaught);
+            }
+        };
     }());
 
 
 
-    // run shared js-env code - pre-init
+    // run shared js-env code - init-before
 /* jslint-ignore-begin */
 local.templateApidocHtml = '\
 <div class="apidocDiv">\n\
@@ -509,23 +520,27 @@ local.templateApidocHtml = '\
             /*
              * this function will read the example from the given file
              */
-                try {
-                    return ('\n\n\n\n\n\n\n\n' +
-                        local.fs.readFileSync(local.path.resolve(options.dir, file), 'utf8') +
+                var result;
+                local.tryCatchOnError(function () {
+                    file = local.path.resolve(options.dir, file);
+                    console.error('apidocCreate - readExample - ' + file);
+                    result = '';
+                    result = ('\n\n\n\n\n\n\n\n' +
+                        local.fs.readFileSync(file, 'utf8') +
                         '\n\n\n\n\n\n\n\n').replace((/\r\n*/g), '\n');
-                } catch (errorCaught) {
-                    return '';
-                }
+                }, console.error);
+                return result;
             };
             toString = function (value) {
             /*
              * this function will try to return the string form of the value
              */
-                try {
-                    return String(value);
-                } catch (errorCaught) {
-                    return '';
-                }
+                var result;
+                local.tryCatchOnError(function () {
+                    result = '';
+                    result = String(value);
+                }, console.error);
+                return result;
             };
             trimLeft = function (text) {
             /*
@@ -551,9 +566,13 @@ local.templateApidocHtml = '\
                 options.modulePathList || local.module.paths
             );
             local.objectSetDefault(options, {
-                env: {},
+                env: { npm_package_description: '' },
                 packageJson: JSON.parse(readExample('package.json')),
-                require: require
+                require: function (file) {
+                    return local.tryCatchOnError(function () {
+                        return require(file);
+                    }, console.error);
+                }
             });
             Object.keys(options.packageJson).forEach(function (key) {
                 tmp = options.packageJson[key];
@@ -580,37 +599,60 @@ local.templateApidocHtml = '\
             local.objectSetDefault(options, {
                 blacklistDict: { global: global },
                 circularList: [global],
-                exampleFileList: [],
+                exampleDict: {},
                 exampleList: [],
                 html: '',
                 libFileList: [],
                 moduleDict: {},
                 moduleExtraDict: {},
+                packageJson: { bin: {} },
                 template: local.templateApidocHtml
-            });
+            }, 2);
             // init exampleList
-            options.exampleList = options.exampleList.concat(options.exampleFileList.concat(
-                local.fs.readdirSync(options.dir)
-                    .sort()
-                    .filter(function (file) {
-                        return file.indexOf(options.env.npm_package_main) === 0 ||
-                            (/^(?:readme)\b/i).test(file) ||
-                            (/^(?:index|lib|test)\b.*\.js$/i).test(file);
-                    })
-            ).map(readExample))
-                .filter(function (element) {
-                    return element.trim();
-                })
-                .slice(0, 128);
+            [1, 2, 3, 4].forEach(function (depth) {
+                options.exampleList = options.exampleList.concat(
+                    // http://stackoverflow.com
+                    // /questions/4509624/how-to-limit-depth-for-recursive-file-list
+                    // find . -maxdepth 1 -mindepth 1 -name "*.js" -type f
+                    local.child_process.execSync('find "' + options.dir +
+                        '" -maxdepth ' + depth + ' -mindepth ' + depth +
+                        ' -type f | sed -e "s|' + options.dir +
+                        '/||" | grep -iv ' +
+/* jslint-ignore-begin */
+'"\
+/\\.\\|\\(\\b\\|_\\)\\(\
+bower_component\\|\
+coverage\\|\
+git\\|\
+min\\|\
+node_module\\|\
+rollup\\|\
+tmp\\|\
+vendor\\)s\\{0,1\\}\\(\\b\\|_\\)\
+" ' +
+/* jslint-ignore-end */
+                            ' | sort | head -n 4096').toString()
+                        .split('\n')
+                );
+            });
+            options.exampleList = options.exampleList.filter(function (file) {
+                if (options.exampleDict[file]) {
+                    return;
+                }
+                options.exampleDict[file] = true;
+                return true;
+            }).slice(0, 100).map(readExample);
             // init moduleMain
-            try {
+            local.tryCatchOnError(function () {
                 console.error('apidocCreate - requiring ' + options.dir + ' ...');
                 moduleMain = {};
                 moduleMain = options.moduleDict[options.env.npm_package_name] ||
-                    options.require(options.dir);
+                    options.require(options.dir) ||
+                    options.require(options.dir + '/' + (options.packageJson.bin)[
+                        Object.keys(options.packageJson.bin)[0]
+                    ]) || {};
                 console.error('apidocCreate - ... required ' + options.dir);
-            } catch (ignore) {
-            }
+            }, console.error);
             tmp = {};
             // handle case where module is a function
             if (typeof moduleMain === 'function') {
@@ -622,9 +664,11 @@ local.templateApidocHtml = '\
                     };
                     // coverage-hack
                     tmp();
-                    tmp.toString = function () {
-                        return text;
-                    };
+                    Object.defineProperties(tmp, { toString: { get: function () {
+                        return function () {
+                            return text;
+                        };
+                    } } });
                 }());
             }
             // normalize moduleMain
@@ -633,8 +677,7 @@ local.templateApidocHtml = '\
             // init circularList - builtin
             Object.keys(process.binding('natives')).forEach(function (key) {
                 if (!(/\/|_linklist|sys/).test(key)) {
-                    options.blacklistDict[key] = options.blacklistDict[key] ||
-                        options.require(key);
+                    options.blacklistDict[key] = options.blacklistDict[key] || require(key);
                 }
             });
             // init circularList - blacklistDict
@@ -661,68 +704,69 @@ local.templateApidocHtml = '\
             // init moduleDict child
             local.apidocModuleDictAdd(options, options.moduleDict);
             // init moduleExtraDict
-            local.fs.readdirSync(options.dir).sort().forEach(function (file) {
-                try {
-                    local.fs.readdirSync(options.dir + '/' + file)
-                        .sort()
-                        .forEach(function (file2) {
-                            file2 = file + '/' + file2;
-                            options.libFileList.push(file2);
-                        });
-                } catch (errorCaught) {
-                    options.libFileList.push(file);
-                }
-            });
             module = options.moduleExtraDict[options.env.npm_package_name] =
                 options.moduleExtraDict[options.env.npm_package_name] || {};
-            options.libFileList.some(function (file) {
-                try {
+            [1, 2, 3, 4].forEach(function (depth) {
+                options.libFileList = options.libFileList.concat(
+                    // http://stackoverflow.com
+                    // /questions/4509624/how-to-limit-depth-for-recursive-file-list
+                    // find . -maxdepth 1 -mindepth 1 -name "*.js" -type f
+                    local.child_process.execSync('find "' + options.dir +
+                        '" -maxdepth ' + depth + ' -mindepth ' + depth +
+                        ' -name "*.js" -type f | sed -e "s|' + options.dir +
+                        '/||" | grep -iv ' +
+/* jslint-ignore-begin */
+'"\
+/\\.\\|\\(\\b\\|_\\)\\(\
+archive\\|artifact\\|asset\\|\
+bower_component\\|build\\|\
+coverage\\|\
+doc\\|dist\\|\
+example\\|external\\|\
+fixture\\|\
+git\\|\
+log\\|\
+min\\|mock\\|\
+node_module\\|\
+rollup\\|\
+spec\\|\
+test\\|tmp\\|\
+vendor\\)s\\{0,1\\}\\(\\b\\|_\\)\
+" ' +
+/* jslint-ignore-end */
+                            ' | sort | head -n 4096').toString()
+                        .split('\n')
+                );
+            });
+            options.ii = 0;
+            options.libFileList.every(function (file) {
+                local.tryCatchOnError(function () {
                     tmp = {};
                     tmp.name = local.path.basename(file)
                         .replace('lib.', '')
                         .replace((/\.[^.]*?$/), '')
                         .replace((/\W/g), '_');
-                    if (!tmp.name) {
-                        return;
-                    }
                     [
                         tmp.name,
                         tmp.name.slice(0, 1).toUpperCase() + tmp.name.slice(1)
                     ].some(function (name) {
-                        tmp.skip = local.path.extname(file) !== '.js' ||
-                            file.indexOf(options.packageJson.main) >= 0 ||
-                            new RegExp('(?:\\b|_)(?:archive|artifact|asset|' +
-                                'bin|bower_components|build|' +
-                                'cli|coverage|' +
-                                'doc|dist|' +
-                                'example|external|' +
-                                'fixture|' +
-                                'index|' +
-                                'log|' +
-                                'min|mock|' +
-                                'node_modules|' +
-                                'rollup|' +
-                                'test|tmp|' +
-                                'vendor)s{0,1}(?:\\b|_)').test(file.toLowerCase()) ||
-                            module[name];
-                        return tmp.skip;
+                        tmp.isFiltered = name && (!options.packageJson.main ||
+                                ('./' + file).indexOf(options.packageJson.main) < 0) &&
+                            !module[name];
+                        return !tmp.isFiltered;
                     });
-                    if (tmp.skip) {
+                    if (!tmp.isFiltered) {
                         return;
                     }
                     tmp.module = options.require(options.dir + '/' + file);
-                    if (options.circularList.indexOf(tmp.module) >= 0) {
+                    if (!(tmp.module && options.circularList.indexOf(tmp.module) < 0)) {
                         return;
                     }
+                    options.ii += 1;
+                    console.error('apidocCreate - libFile - ' + file);
                     module[tmp.name] = tmp.module;
-                    // update exampleList
-                    options.exampleList.push(readExample(file));
-                    console.error('apidocCreate - ' + options.exampleList.length +
-                        '. added libFile ' + file);
-                } catch (errorCaught) {
-                    console.error(errorCaught);
-                }
-                return options.exampleList.length >= 256;
+                }, console.error);
+                return options.ii <= 100;
             });
             local.apidocModuleDictAdd(options, options.moduleExtraDict);
             Object.keys(options.moduleDict).forEach(function (key) {
@@ -739,22 +783,20 @@ local.templateApidocHtml = '\
                     module = options.moduleDict[prefix];
                     // handle case where module is a function
                     if (typeof module === 'function') {
-                        try {
+                        local.tryCatchOnError(function () {
                             module[prefix.split('.').slice(-1)[0]] =
                                 module[prefix.split('.').slice(-1)[0]] || module;
-                        } catch (ignore) {
-                        }
+                        }, console.error);
                     }
                     return {
                         elementList: Object.keys(module)
                             .filter(function (key) {
-                                try {
+                                return local.tryCatchOnError(function () {
                                     return key &&
                                         (/^\w[\w\-.]*?$/).test(key) &&
                                         key.indexOf('testCase_') !== 0 &&
                                         module[key] !== options.blacklistDict[key];
-                                } catch (ignore) {
-                                }
+                                }, console.error);
                             })
                             .map(function (key) {
                                 return elementCreate(module, prefix, key);
@@ -787,7 +829,7 @@ local.templateApidocHtml = '\
                     }
                     Object.keys(moduleDict[prefix]).forEach(function (key) {
                         // bug-workaround - buggy electron getter / setter
-                        try {
+                        local.tryCatchOnError(function () {
                             if (!(/^\w[\w\-.]*?$/).test(key) || !moduleDict[prefix][key]) {
                                 return;
                             }
@@ -811,22 +853,19 @@ local.templateApidocHtml = '\
                                 tmp.module,
                                 tmp.module.prototype
                             ].some(function (dict) {
-                                return typeof dict === 'function' ||
-                                    Object.keys(dict || {}).some(function (key) {
-                                        // bug-workaround - buggy electron getter / setter
-                                        try {
-                                            return typeof dict[key] === 'function';
-                                        } catch (ignore) {
-                                        }
-                                    });
+                                return Object.keys(dict || {}).some(function (key) {
+                                    // bug-workaround - buggy electron getter / setter
+                                    return local.tryCatchOnError(function () {
+                                        return typeof dict[key] === 'function';
+                                    }, console.error);
+                                });
                             });
                             if (!isModule) {
                                 return;
                             }
                             options.circularList.push(tmp.module);
                             options.moduleDict[tmp.name] = tmp.module;
-                        } catch (ignore) {
-                        }
+                        }, console.error);
                     });
                 });
             });
@@ -836,10 +875,11 @@ local.templateApidocHtml = '\
 
 
 
-    // run node js-env code - post-init
+    // run node js-env code - init-after
     /* istanbul ignore next */
     case 'node':
         // require modules
+        local.child_process = require('child_process');
         local.fs = require('fs');
         local.path = require('path');
         // run the cli
@@ -912,7 +952,7 @@ local.templateApidocHtml = '\
 
 
 
-    // run shared js-env code - pre-init
+    // run shared js-env code - init-before
     (function () {
         // init local
         local = {};
@@ -951,7 +991,7 @@ local.templateApidocHtml = '\
 
 
     /* istanbul ignore next */
-    // run shared js-env code - pre-function
+    // run shared js-env code - function-before
     (function () {
         local.jsonCopy = function (arg) {
         /*
@@ -2268,6 +2308,7 @@ local.templateApidocHtml = '\
          * this function will get the dbRow's in dbRowList with the given query
          */
             var bb, dbRowDict, result;
+            // optimization - convert to boolean
             not = !!not;
             result = dbRowList;
             if (!(query && typeof query === 'object')) {
@@ -2482,7 +2523,7 @@ local.templateApidocHtml = '\
 
 
 
-    // run node js-env code - post-init
+    // run node js-env code - init-after
     case 'node':
         // require modules
         local.fs = require('fs');
@@ -2512,7 +2553,7 @@ local.templateApidocHtml = '\
 
 
 
-    // run shared js-env code - pre-init
+    // run shared js-env code - init-before
     (function () {
         // init local
         local = {};
@@ -2551,7 +2592,7 @@ local.templateApidocHtml = '\
 
 
     /* istanbul ignore next */
-    // run shared js-env code - pre-function
+    // run shared js-env code - function-before
     (function () {
         local.httpRequest = function (options, onError) {
         /*
@@ -2922,7 +2963,7 @@ local.templateApidocHtml = '\
                 headers: {
                     // github oauth authentication
                     Authorization: 'token ' + process.env.GITHUB_TOKEN,
-                    // bug-workaround - github api requires user-agent header
+                    // bug-workaround - https://developer.github.com/v3/#user-agent-required
                     'User-Agent': 'undefined'
                 },
                 message: options.message,
@@ -3044,7 +3085,7 @@ local.templateApidocHtml = '\
 
 
     /* istanbul ignore next */
-    // run node js-env code - post-init
+    // run node js-env code - init-after
     case 'node':
         // require modules
         local.fs = require('fs');
@@ -3134,7 +3175,7 @@ local.templateApidocHtml = '\
 
 
 
-    // run shared js-env code - pre-init
+    // run shared js-env code - init-before
     (function () {
         // jslint-hack
         local.nop(__dirname);
@@ -3367,7 +3408,7 @@ local.templateApidocHtml = '\
 
 
 
-    // run browser js-env code - pre-init
+    // run browser js-env code - init-before
     case 'browser':
         // require modules
         local.path = {
@@ -3382,7 +3423,7 @@ local.templateApidocHtml = '\
 
 
 
-    // run node js-env code - pre-init
+    // run node js-env code - init-before
     case 'node':
         // require modules
         local._fs = local.require('fs');
@@ -5555,7 +5596,7 @@ local.templateCoverageBadgeSvg =
 
 
 
-    // run node js-env code - post-init
+    // run node js-env code - init-after
     case 'node':
         /* istanbul ignore next */
         // run the cli
@@ -5636,7 +5677,7 @@ local.templateCoverageBadgeSvg =
         break;
     }
 }(
-    // run shared js-env code - pre-init
+    // run shared js-env code - init-before
     (function () {
         'use strict';
         var local;
@@ -5732,7 +5773,7 @@ local.templateCoverageBadgeSvg =
 
 
 
-    // run shared js-env code - pre-init
+    // run shared js-env code - init-before
     (function () {
         // init local
         local = {};
@@ -8212,7 +8253,7 @@ local.CSSLint = CSSLint; local.JSLINT = JSLINT, local.jslintEs6 = jslint; }());
 
 
 
-    // run node js-env code - post-init
+    // run node js-env code - init-after
     /* istanbul ignore next */
     case 'node':
         // require modules
@@ -8257,7 +8298,7 @@ local.CSSLint = CSSLint; local.JSLINT = JSLINT, local.jslintEs6 = jslint; }());
 
 
 
-    // run shared js-env code - pre-init
+    // run shared js-env code - init-before
     (function () {
         // init local
         local = {};
@@ -8756,7 +8797,7 @@ sjcl.misc.scrypt.blockxor = function(S, Si, D, Di, len) {
 
 
 
-    // run shared js-env code - pre-init
+    // run shared js-env code - init-before
     (function () {
         // init local
         local = {};
@@ -9394,7 +9435,7 @@ split_lines=split_lines,exports.MAP=MAP,exports.ast_squeeze_more=require("./sque
 
 
     /* istanbul ignore next */
-    // run node js-env code - post-init
+    // run node js-env code - init-after
     case 'node':
         // require modules
         local.fs = require('fs');
@@ -9459,7 +9500,7 @@ split_lines=split_lines,exports.MAP=MAP,exports.ast_squeeze_more=require("./sque
 
 
 
-    // run shared js-env code - pre-init
+    // run shared js-env code - init-before
     (function () {
         // init local
         local = {};
@@ -9497,7 +9538,7 @@ split_lines=split_lines,exports.MAP=MAP,exports.ast_squeeze_more=require("./sque
 
 
 
-    // run shared js-env code - pre-function
+    // run shared js-env code - function-before
     (function () {
         // init global.debug_inline
         local.global['debug_inline'.replace('_i', 'I')] = local.global[
@@ -9673,7 +9714,7 @@ instruction\n\
 \n\
 \n\
 \n\
-    // run shared js\-env code - pre-init\n\
+    // run shared js\-env code - init-before\n\
     (function () {\n\
         // init local\n\
         local = {};\n\
@@ -9706,8 +9747,8 @@ instruction\n\
 \n\
 \n\
 \n\
-    // post-init\n\
-    // run browser js\-env code - post-init\n\
+    // init-after\n\
+    // run browser js\-env code - init-after\n\
     /* istanbul ignore next */\n\
     case \'browser\':\n\
         local.testRunBrowser = function (event) {\n\
@@ -9795,7 +9836,7 @@ instruction\n\
 \n\
 \n\
 \n\
-    // run node js\-env code - post-init\n\
+    // run node js\-env code - init-after\n\
     /* istanbul ignore next */\n\
     case \'node\':\n\
         // export local\n\
@@ -9847,14 +9888,15 @@ local.assetsDict['/assets.index.template.html'].replace((/\n/g), '\\n\\\n') +
         local.assetsDict[\'/assets.example.js\'] =\n\
             local.assetsDict[\'/assets.example.js\'] ||\n\
             local.fs.readFileSync(__filename, \'utf8\');\n\
+        // bug-workaround - long $npm_package_buildCustomOrg\n\
+        /* jslint-ignore-begin */\n\
         local.assetsDict[\'/assets.jslint.rollup.js\'] =\n\
             local.assetsDict[\'/assets.jslint.rollup.js\'] ||\n\
             local.fs.readFileSync(\n\
-                // buildCustomOrg-hack\n\
-                local.jslint.__dirname +\n\
-                    \'/lib.jslint.js\',\n\
+                local.jslint.__dirname + \'/lib.jslint.js\',\n\
                 \'utf8\'\n\
             ).replace((/^#!/), \'//\');\n\
+        /* jslint-ignore-end */\n\
         local.assetsDict[\'/favicon.ico\'] = local.assetsDict[\'/favicon.ico\'] || \'\';\n\
         // if $npm_config_timeout_exit exists,\n\
         // then exit this process after $npm_config_timeout_exit ms\n\
@@ -9901,7 +9943,7 @@ local.assetsDict['/assets.lib.template.js'] = '\
 \n\
 \n\
 \n\
-    // run shared js\-env code - pre-init\n\
+    // run shared js\-env code - init-before\n\
     (function () {\n\
         // init local\n\
         local = {};\n\
@@ -10076,13 +10118,13 @@ the greatest app in the world!\n\
 \n\
 # this shell script will run the build for this package\n\
 \n\
-shBuildCiPost() {(set -e\n\
+shBuildCiAfter() {(set -e\n\
     shDeployGithub\n\
     # shDeployHeroku\n\
     shReadmeBuildLinkVerify\n\
 )}\n\
 \n\
-shBuildCiPre() {(set -e\n\
+shBuildCiBefore() {(set -e\n\
     shReadmeTest example.js\n\
     shReadmeTest example.sh\n\
     shNpmTestPublished\n\
@@ -10105,7 +10147,7 @@ local.assetsDict['/assets.readmeCustomOrg.npmdoc.template.md'] = '\
 # npmdoc-{{env.npm_package_name}} \
 \n\
 \n\
-#### api documentation for \
+#### basic api documentation for \
 {{#if env.npm_package_homepage}} \
 [{{env.npm_package_name}} (v{{env.npm_package_version}})]({{env.npm_package_homepage}}) \
 {{#unless env.npm_package_homepage}} \
@@ -10158,7 +10200,7 @@ local.assetsDict['/assets.readmeCustomOrg.npmtest.template.md'] = '\
 # npmtest-{{env.npm_package_name}} \
 \n\
 \n\
-#### test coverage for \
+#### basic test coverage for \
 {{#if env.npm_package_homepage}} \
 [{{env.npm_package_name}} (v{{env.npm_package_version}})]({{env.npm_package_homepage}}) \
 {{#unless env.npm_package_homepage}} \
@@ -10181,6 +10223,7 @@ local.assetsDict['/assets.readmeCustomOrg.npmtest.template.md'] = '\
 \n\
 | test-report : | [![test-report](https://npmtest.github.io/node-npmtest-{{env.npm_package_name}}/build/test-report.badge.svg)](https://npmtest.github.io/node-npmtest-{{env.npm_package_name}}/build/test-report.html)| \
 \n\
+| test-server-github : | [![github.com test-server](https://npmtest.github.io/node-npmtest-{{env.npm_package_name}}/GitHub-Mark-32px.png)](https://npmtest.github.io/node-npmtest-{{env.npm_package_name}}/build/app/index.html) | \
 | build-artifacts : | [![build-artifacts](https://npmtest.github.io/node-npmtest-{{env.npm_package_name}}/glyphicons_144_folder_open.png)](https://github.com/npmtest/node-npmtest-{{env.npm_package_name}}/tree/gh-pages/build)| \
 \n\
 \n\
@@ -10247,7 +10290,7 @@ local.assetsDict['/assets.test.template.js'] = '\
 \n\
 \n\
 \n\
-    // run shared js\-env code - pre-init\n\
+    // run shared js\-env code - init-before\n\
     (function () {\n\
         // init local\n\
         local = {};\n\
@@ -10280,7 +10323,7 @@ local.assetsDict['/assets.test.template.js'] = '\
         // re-init local from example.js\n\
         case \'node\':\n\
             local = (local.global.utility2_rollup || require(\'utility2\'))\n\
-                .requireExampleJsFromReadme();\n\
+                .requireReadme();\n\
             break;\n\
         }\n\
         // export local\n\
@@ -10310,7 +10353,7 @@ local.assetsDict['/assets.test.template.js'] = '\
 \n\
 \n\
 \n\
-    // run shared js\-env code - post-init\n\
+    // run shared js\-env code - init-after\n\
     (function () {\n\
         return;\n\
     }());\n\
@@ -10318,7 +10361,7 @@ local.assetsDict['/assets.test.template.js'] = '\
 \n\
 \n\
 \n\
-    // run browser js\-env code - post-init\n\
+    // run browser js\-env code - init-after\n\
     case \'browser\':\n\
         local.testCase_browser_nullCase = local.testCase_browser_nullCase || function (\n\
             options,\n\
@@ -10338,7 +10381,7 @@ local.assetsDict['/assets.test.template.js'] = '\
 \n\
 \n\
 \n\
-    // run node js\-env code - post-init\n\
+    // run node js\-env code - init-after\n\
     /* istanbul ignore next */\n\
     case \'node\':\n\
         local.testCase_buildApidoc_default = local.testCase_buildApidoc_default || function (\n\
@@ -11748,11 +11791,10 @@ local.assetsDict['/favicon.ico'] = '';
                         onNext(local._debugTryCatchErrorCaught);
                         return;
                     }
-                    console.error('\nbrowserTest - merging test-report from ' +
-                        options.fileTestReport + '\n');
                     if (!options.modeTestIgnore) {
-                        console.error(local.testReport);
                         local.testReportMerge(local.testReport, data);
+                        console.error('\nbrowserTest - merged test-report from file://' +
+                            options.fileTestReport + '\n');
                     }
                     // create test-report.json
                     local.fs.writeFileSync(
@@ -12044,7 +12086,10 @@ return Utf8ArrayToStr(bff);
                 onError();
                 return;
             }
-            local.objectSetDefault(options, { blacklistDict: local });
+            local.objectSetDefault(options, {
+                blacklistDict: local,
+                require: local.requireInSandbox
+            });
             // create apidoc.html
             local.fsWriteFileWithMkdirpSync(
                 local.env.npm_config_dir_build + '/apidoc.html',
@@ -12168,10 +12213,11 @@ return Utf8ArrayToStr(bff);
             options.packageJson = JSON.parse(local.fs.readFileSync('package.json', 'utf8'));
             switch (local.env.GITHUB_ORG) {
             case 'npmdoc':
-                // update package.json
-                local.objectSetOverride(options.packageJson, local.objectLiteralize({
-                    keywords: ['documentation', local.env.npm_package_buildCustomOrg]
-                }), 2);
+                local.objectSetOverride(options, {
+                    packageJson: {
+                        keywords: ['documentation', local.env.npm_package_buildCustomOrg]
+                    }
+                }, 2);
                 // build apidoc.html
                 onParallel.counter += 1;
                 local.buildApidoc({
@@ -12181,10 +12227,11 @@ return Utf8ArrayToStr(bff);
                 }, onParallel);
                 break;
             case 'npmtest':
-                // update package.json
-                local.objectSetOverride(options.packageJson, local.objectLiteralize({
-                    keywords: ['coverage', 'test', local.env.npm_package_buildCustomOrg]
-                }), 2);
+                local.objectSetOverride(options, {
+                    packageJson: {
+                        keywords: ['coverage', 'test', local.env.npm_package_buildCustomOrg]
+                    }
+                }, 2);
                 break;
             }
             // build README.md
@@ -12192,6 +12239,7 @@ return Utf8ArrayToStr(bff);
                 dir: local.env.npm_package_buildCustomOrg,
                 modeNoApidoc: true,
                 modulePathList: options.modulePathList,
+                require: local.requireInSandbox,
                 template: local.assetsDict['/assets.readmeCustomOrg.' + local.env.GITHUB_ORG +
                     '.template.md']
             });
@@ -12306,7 +12354,7 @@ return Utf8ArrayToStr(bff);
                 (/\n```javascript\n\/\*\nexample\.js\n\n[^`]*?\n/),
                 (/\n {8}\$ npm install [^`]*? &&/),
                 (/\n {12}: global;\n[^`]*?\n {8}local\.global\.local = local;\n/),
-                (/\n {8}local\.global\.local = local;\n[^`]*?\n {4}\/\/ post-init\n/),
+                (/\n {8}local\.global\.local = local;\n[^`]*?\n {4}\/\/ init-after\n/),
                 new RegExp('\\n {8}local\\.testRunBrowser = function \\(event\\) \\{\\n' +
                     '[^`]*?^ {12}if \\(!event \\|\\| \\(event &&\\n', 'm'),
                 (/\n {12}\/\/ custom-case\n[^`]*?\n {12}\}\n/),
@@ -12316,8 +12364,8 @@ return Utf8ArrayToStr(bff);
                 (/\nutility2-comment -->(?:\\n\\\n){4}[^`]*?^<!-- utility2-comment\\n\\\n/m),
                 // customize build-script
                 (/\n# internal build-script\n[\S\s]*?^- build_ci\.sh\n/m),
-                (/\nshBuildCiPost\(\) \{\(set -e\n[^`]*?\n\)\}\n/),
-                (/\nshBuildCiPre\(\) \{\(set -e\n[^`]*?\n\)\}\n/)
+                (/\nshBuildCiAfter\(\) \{\(set -e\n[^`]*?\n\)\}\n/),
+                (/\nshBuildCiBefore\(\) \{\(set -e\n[^`]*?\n\)\}\n/)
             ].forEach(function (rgx) {
                 // handle large string-replace
                 options.dataFrom.replace(rgx, function (match0) {
@@ -12357,15 +12405,15 @@ return Utf8ArrayToStr(bff);
             // search-and-replace - customize dataTo
             [
                 // customize js\-env code
-                new RegExp('\\n {4}\\/\\/ run shared js\\-env code - pre-init\\n[\\S\\s]*?' +
+                new RegExp('\\n {4}\\/\\/ run shared js\\-env code - init-before\\n[\\S\\s]*?' +
                     '^ {4}\\(function \\(\\) \\{\\n', 'm'),
                 (/\n {8}local.global.local = local;\n[\S\s]*?^ {4}\}\(\)\);\n/m),
                 (/\n {4}\/\/ run shared js\-env code - function\n[\S\s]*?\n {4}\}\(\)\);\n/),
                 (/\n {4}\/\/ run browser js\-env code - function\n[\S\s]*?\n {8}break;\n/),
                 (/\n {4}\/\/ run node js\-env code - function\n[\S\s]*?\n {8}break;\n/),
-                new RegExp('\\n {4}\\/\\/ run browser js\\-env code - post-init\\n[\\S\\s]*?' +
+                new RegExp('\\n {4}\\/\\/ run browser js\\-env code - init-after\\n[\\S\\s]*?' +
                     '^ {4}case \'browser\':\n', 'm'),
-                (/\n {4}\/\/ run shared js\-env code - post-init\n[\S\s]*?\n {4}\}\(\)\);\n/)
+                (/\n {4}\/\/ run shared js\-env code - init-after\n[\S\s]*?\n {4}\}\(\)\);\n/)
             ].forEach(function (rgx) {
                 // handle large string-replace
                 options.dataFrom.replace(rgx, function (match0) {
@@ -12427,13 +12475,13 @@ return Utf8ArrayToStr(bff);
             return tmp;
         };
 
-        local.dbTableTravisOrgCreate = function (options, onError) {
+        local.dbTableCustomOrgCreate = function (options, onError) {
         /*
-         * this function will create a persistent dbTableTravisOrg
+         * this function will create a persistent dbTableCustomOrg
          */
             options = local.objectSetDefault(options, { githubOrg: local.env.GITHUB_ORG });
             options = local.objectSetDefault(options, {
-                name: 'TravisOrg.' + options.githubOrg,
+                name: 'CustomOrg.' + options.githubOrg,
                 sizeLimit: 1000,
                 sortDefault: [{
                     fieldName: '_id'
@@ -12445,24 +12493,38 @@ return Utf8ArrayToStr(bff);
                     fieldName: 'active'
                 }]
             });
-            local.dbTableTravisOrg = local.db.dbTableCreateOne(options, onError);
-            return local.dbTableTravisOrg;
+            local.dbTableCustomOrg = local.db.dbTableCreateOne(options, onError);
+            return local.dbTableCustomOrg;
         };
 
-        local.dbTableTravisOrgUpdate = function (options, onError) {
+        local.dbTableCustomOrgCrudGetManyByQuery = function (options) {
         /*
-         * this function will update dbTableTravisOrg with active, public repos
+         * this function will query dbTableCustomOrg
+         */
+            options = local.objectSetDefault(options, { githubOrg: local.env.GITHUB_ORG });
+            options = local.objectSetDefault(options, {
+                query: { buildStartedAt: { $not: { $gt: new Date(Date.now() - (
+                    Number(options.olderThanLast) || 0
+                )).toISOString() } } }
+            }, 2);
+            console.error('dbTableCustomOrgCrudGetManyByQuery - ' + JSON.stringify(options));
+            return local.dbTableCustomOrg.crudGetManyByQuery(options);
+        };
+
+        local.dbTableCustomOrgUpdate = function (options, onError) {
+        /*
+         * this function will update dbTableCustomOrg with active, public repos
          */
             var count, dbRowList, self;
             options = local.objectSetDefault(options, { githubOrg: local.env.GITHUB_ORG });
             local.onNext(options, function (error, data) {
                 switch (options.modeNext) {
                 case 1:
-                    self = local.dbTableTravisOrg =
-                        local.dbTableTravisOrgCreate(options, options.onNext);
+                    self = local.dbTableCustomOrg =
+                        local.dbTableCustomOrgCreate(options, options.onNext);
                     break;
                 case 2:
-                    self = local.dbTableTravisOrg = data;
+                    self = local.dbTableCustomOrg = data;
                     data = {
                         headers: {
                             'Travis-API-Version': '3',
@@ -13320,17 +13382,12 @@ return Utf8ArrayToStr(bff);
             if (!module || module === '.' || module.indexOf('/') >= 0) {
                 return require('path').resolve(process.cwd(), module || '');
             }
-            // search builtin
-            if (Object.keys(process.binding('natives')).indexOf(module) >= 0) {
-                return module;
-            }
             // search modulePathList
-            [
-                ['node_modules'],
-                modulePathList,
-                require('module').globalPaths
-            ].some(function (modulePathList) {
-                modulePathList.some(function (modulePath) {
+            ['node_modules']
+                .concat(modulePathList)
+                .concat(require('module').globalPaths)
+                .concat([process.env.HOME + '/node_modules', '/usr/local/lib/node_modules'])
+                .some(function (modulePath) {
                     try {
                         tmp = require('path').resolve(process.cwd(), modulePath + '/' + module);
                         result = require('fs').statSync(tmp).isDirectory() && tmp;
@@ -13338,8 +13395,6 @@ return Utf8ArrayToStr(bff);
                     } catch (ignore) {
                     }
                 });
-                return result;
-            });
             return result || '';
         };
 
@@ -13855,7 +13910,7 @@ return Utf8ArrayToStr(bff);
                         ['-c', 'find . -type f | grep -v ' +
 /* jslint-ignore-begin */
 '"\
-/\\.\\|.*\\(\\b\\|_\\)\\(\\.\\d\\|\
+/\\.\\|\\(\\b\\|_\\)\\(\\.\\d\\|\
 archive\\|artifact\\|\
 bower_component\\|build\\|\
 coverage\\|\
@@ -13870,7 +13925,7 @@ node_module\\|\
 rollup\\|\
 swp\\|\
 tmp\\|\
-vendor\\)\\(\\b\\|[_s]\\)\
+vendor\\)s\\{0,1\\}\\(\\b\\|_\\)\
 " ' +
 /* jslint-ignore-end */
                             '| tr "\\n" "\\000" | xargs -0 grep -in "' +
@@ -13930,7 +13985,54 @@ vendor\\)\\(\\b\\|[_s]\\)\
             }()));
         };
 
-        local.requireExampleJsFromReadme = function () {
+        local.requireInSandbox = function (file) {
+        /*
+         * this function will require the file in a sandbox-lite env
+         */
+            var exports, mockDict, mockList, tmp;
+            mockList = [
+                [ local.global, {
+                    setImmediate: local.nop,
+                    setInterval: local.nop,
+                    setTimeout: local.nop
+                }]
+            ];
+            [
+                [local, 'child_process'],
+                [local, 'cluster'],
+                [local, 'fs'],
+                [local, 'http'],
+                [local, 'https'],
+                [local, 'net'],
+                [local, 'repl'],
+                [local.global, 'process'],
+                [process, 'stdin']
+            ].forEach(function (element) {
+                tmp = element[0][element[1]];
+                mockDict = {};
+                Object.keys(tmp).forEach(function (key) {
+                    if (typeof tmp[key] === 'function' && !(
+                            /^(?:fs\.Read|fs\.read|process\.binding|process\.dlopen)/
+                        ).test(element[1] + '.' + key)) {
+                        mockDict[key] = function () {
+                            return;
+                        };
+                        // coverage-hack
+                        mockDict[key]();
+                    }
+                });
+                mockList.push([ module, mockDict ]);
+            });
+            local.testMock(mockList, function (onError) {
+                local.tryCatchOnError(function () {
+                    exports = require(file);
+                }, console.error);
+                onError();
+            }, local.onErrorThrow);
+            return exports;
+        };
+
+        local.requireReadme = function () {
         /*
          * this function will require and export example.js embedded in README.md
          */
@@ -14641,6 +14743,7 @@ instruction\n\
         /*
          * this function will create test-report artifacts
          */
+            testReport = local.objectSetDefault(testReport, { testPlatformList: [] });
             // print test-report summary
             console.error('\n' + new Array(56).join('-') + '\n' + testReport.testPlatformList
                 .filter(function (testPlatform) {
@@ -14693,8 +14796,11 @@ instruction\n\
             // if any test failed, then exit with non-zero exit-code
             console.error('\n' + local.env.MODE_BUILD +
                 ' - ' + testReport.testsFailed + ' failed tests\n');
-            // exit with number of tests failed
-            local.exit(testReport.testsFailed);
+            // print test-report detail
+            if (testReport.testsFailed) {
+                console.error('\n' + JSON.stringify(testReport, null, 4) + '\n');
+            }
+            return testReport;
         };
 
         local.testReportMerge = function (testReport1, testReport2) {
@@ -15116,6 +15222,13 @@ instruction\n\
             local.onReadyBefore();
         };
 
+        local.throwError = function () {
+        /*
+         * this function will throw an error
+         */
+            throw new Error();
+        };
+
         local.timeElapsedPoll = function (options) {
         /*
          * this function will poll options.timeElapsed
@@ -15132,13 +15245,6 @@ instruction\n\
             options = options || {};
             options.timeStart = timeStart || options.timeStart || Date.now();
             return options;
-        };
-
-        local.throwError = function () {
-        /*
-         * this function will throw an error
-         */
-            throw new Error();
         };
 
         local.tryCatchOnError = function (fnc, onError) {
@@ -15282,7 +15388,7 @@ instruction\n\
 
 
 
-    // run shared js-env code - post-init
+    // run shared js-env code - init-after
     (function () {
         local.ajaxProgressCounter = 0;
         local.ajaxProgressState = 0;
@@ -15411,7 +15517,7 @@ instruction\n\
 
 
 
-    // run browser js-env code - post-init
+    // run browser js-env code - init-after
     case 'browser':
         // require modules
         local.http = local._http;
@@ -15420,13 +15526,14 @@ instruction\n\
 
 
 
-    // run node js-env code - post-init
+    // run node js-env code - init-after
     /* istanbul ignore next */
     case 'node':
         // require modules
         local.Module = require('module');
         local.__require = require;
         local.child_process = require('child_process');
+        local.cluster = require('cluster');
         local.fs = require('fs');
         local.http = require('http');
         local.https = require('https');
@@ -15538,8 +15645,6 @@ instruction\n\
             local.assetsDict['/assets.utility2.rollup.js'];
         // merge previous test-report
         if (local.env.npm_config_file_test_report_merge) {
-            console.error('merging file://' + local.env.npm_config_file_test_report_merge +
-                ' to test-report');
             local.testReportMerge(
                 local.testReport,
                 JSON.parse(local.tryCatchReadFile(
@@ -15547,6 +15652,8 @@ instruction\n\
                     'utf8'
                 ) || '{}')
             );
+            console.error('\n' + local.env.MODE_BUILD + ' - merged test-report from file://' +
+                local.env.npm_config_file_test_report_merge);
         }
         break;
     }
@@ -15590,24 +15697,84 @@ instruction\n\
                 });
             }, local.exit);
             return;
-        case 'dbTableTravisOrgCrudGetManyByQuery':
-            local.dbTableTravisOrgCreate(JSON.parse(process.argv[3]), function (error, data) {
+        case 'cli.customOrgStarFilterNotBuilt':
+            (function () {
+                var options;
+                options = {};
+                options.dict = {};
+                options.list = [];
+                for (options.ii = Number(process.argv[3]);
+                        options.ii < Number(process.argv[4]);
+                        options.ii += 36) {
+                    options.list.push(options.ii);
+                }
+                local.listShuffle(options.list);
+                local.onParallelList(options, function (options2, onParallel) {
+                    onParallel.counter += 1;
+                    local.ajax({
+                        url: 'https://www.npmjs.com/browse/star?offset=' + options2.element
+                    }, function (error, xhr) {
+                        // jslint-hack
+                        local.nop(error);
+                        console.error('cli.customOrgStarFilterNotBuilt - fetched ' + xhr.url);
+                        (xhr.responseText || '').toLowerCase().replace((
+                            /href=\"\/package\/(.+?)\"/g
+                        ), function (match0, match1) {
+                            match0 = local.env.GITHUB_ORG + '/node-' + local.env.GITHUB_ORG +
+                                '-' + match1;
+                            if (options.dict[match0]) {
+                                return;
+                            }
+                            onParallel.counter += 1;
+                            local.onParallelList({ list: [{
+                                url: 'https://raw.githubusercontent.com/' + match0 +
+                                    '/gh-pages/build..alpha..travis-ci.org' +
+                                    '/screenCapture.npmPackageListing.svg'
+                            }, {
+                                url: 'https://registry.npmjs.org/' + local.env.GITHUB_ORG +
+                                    '-' + match1
+                            }] }, function (options2, onParallel) {
+                                onParallel.counter += 1;
+                                local.ajax(options2.element, function (error) {
+                                    if (error && !options.dict[match0]) {
+                                        options.dict[match0] = true;
+                                        console.error(
+                                            'cli.customOrgStarFilterNotBuilt - not built - ' +
+                                                match0
+                                        );
+                                        console.log(match0);
+                                    }
+                                    onParallel();
+                                });
+                            }, function () {
+                                onParallel();
+                            });
+                        });
+                        onParallel();
+                    });
+                }, local.onErrorThrow);
+            }());
+            return;
+        case 'cli.dbTableCustomOrgCrudGetManyByQuery':
+            local.dbTableCustomOrgCreate(JSON.parse(process.argv[3] || '{}'), function (error) {
                 // validate no error occurred
                 local.assert(!error, error);
-                console.log(data.crudGetManyByQuery(JSON.parse(process.argv[3]))
+                console.log(local.dbTableCustomOrgCrudGetManyByQuery(
+                    JSON.parse(process.argv[3] || '{}')
+                )
                     .map(function (element) {
                         return element._id;
                     })
                     .join('\n'));
             });
             return;
-        case 'dbTableTravisOrgUpdate':
-            local.dbTableTravisOrgUpdate(
-                JSON.parse(process.argv[3]),
+        case 'cli.dbTableCustomOrgUpdate':
+            local.dbTableCustomOrgUpdate(
+                JSON.parse(process.argv[3] || '{}'),
                 local.onErrorThrow
             );
             return;
-        case 'onParallelListSpawn':
+        case 'onParallelListExec':
             local.onParallelList({
                 list: process.argv[3].split('\n').filter(function (element) {
                     return element.trim();
@@ -15621,11 +15788,16 @@ instruction\n\
                     ['-c', '. ' + local.__dirname + '/lib.utility2.sh; ' + options.element],
                     { stdio: ['ignore', 1, 2] }
                 ).on('exit', function (exitCode) {
-                    console.error('onParallelListSpawn - [' + (onParallel.ii + 1) +
+                    console.error('onParallelListExec - [' + (onParallel.ii + 1) +
                         ' of ' + options.list.length + '] exitCode ' + exitCode);
                     onParallel(exitCode && new Error(exitCode), options);
                 });
             }, local.exit);
+            return;
+        case 'cli.testReportCreate':
+            local.exit(local.testReportCreate(local.tryCatchOnError(function () {
+                return require(local.env.npm_config_dir_build + '/test-report.json');
+            }, local.onErrorDefault)).testsFailed);
             return;
         }
         // init lib
@@ -15669,7 +15841,7 @@ instruction\n\
 
 
 
-    // run shared js-env code - pre-init
+    // run shared js-env code - init-before
     (function () {
         // init local
         local = {};
@@ -18264,7 +18436,7 @@ local.templateUiResponseAjax = '\
                             )
                         ) || element.value;
                     });
-                    // pre-init crud.idField
+                    // init-before crud.idField
                     crud.modeQueryByIdInvert = true;
                     local.idFieldInit(crud);
                     // init crud.data.id
@@ -18277,7 +18449,7 @@ local.templateUiResponseAjax = '\
                         crud.data[crud.idField] = (crud.body && crud.body[crud.idAlias]);
                         break;
                     }
-                    // post-init crud.idField
+                    // init-after crud.idField
                     crud.modeQueryByIdInvert = true;
                     local.idFieldInit(crud);
                     nextMiddleware();
@@ -19802,7 +19974,7 @@ local.templateUiResponseAjax = '\
 
 
 
-    // run browser js-env code - post-init
+    // run browser js-env code - init-after
     case 'browser':
         // init state
         local.utility2._stateInit({});
@@ -19810,7 +19982,7 @@ local.templateUiResponseAjax = '\
 
 
 
-    // run node js-env code - post-init
+    // run node js-env code - init-after
     case 'node':
         // init assets.lib.rollup.js
         local.assetsDict['/assets.swgg.rollup.js'] =
@@ -19930,7 +20102,7 @@ local.templateUiResponseAjax = '\
         global.utility2_rollup;
     local.local = local;
 /* jslint-ignore-begin */
-local._stateInit({"utility2":{"assetsDict":{"/assets.index.template.html":"<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{{env.npm_package_name}} (v{{env.npm_package_version}})</title>\n<style>\n/*csslint\n    box-sizing: false,\n    universal-selector: false\n*/\n* {\n    box-sizing: border-box;\n}\nbody {\n    background: #dde;\n    font-family: Arial, Helvetica, sans-serif;\n    margin: 2rem;\n}\nbody > * {\n    margin-bottom: 1rem;\n}\n.utility2FooterDiv {\n    margin-top: 20px;\n    text-align: center;\n}\n</style>\n<style>\n/*csslint\n*/\ntextarea {\n    font-family: monospace;\n    height: 10rem;\n    width: 100%;\n}\ntextarea[readonly] {\n    background: #ddd;\n}\n</style>\n</head>\n<body>\n<!-- utility2-comment\n<div id=\"ajaxProgressDiv1\" style=\"background: #d00; height: 2px; left: 0; margin: 0; padding: 0; position: fixed; top: 0; transition: background 0.5s, width 1.5s; width: 25%;\"></div>\nutility2-comment -->\n<h1>\n<!-- utility2-comment\n    <a\n        {{#if env.npm_package_homepage}}\n        href=\"{{env.npm_package_homepage}}\"\n        {{/if env.npm_package_homepage}}\n        target=\"_blank\"\n    >\nutility2-comment -->\n        {{env.npm_package_name}} (v{{env.npm_package_version}})\n<!-- utility2-comment\n    </a>\nutility2-comment -->\n</h1>\n<h3>{{env.npm_package_description}}</h3>\n<!-- utility2-comment\n<h4><a download href=\"assets.app.js\">download standalone app</a></h4>\n<button class=\"onclick onreset\" id=\"testRunButton1\">run internal test</button><br>\n<div id=\"testReportDiv1\" style=\"display: none;\"></div>\nutility2-comment -->\n\n\n\n<label>stderr and stdout</label>\n<textarea class=\"resettable\" id=\"outputTextareaStdout1\" readonly></textarea>\n<!-- utility2-comment\n{{#if isRollup}}\n<script src=\"assets.app.js\"></script>\n{{#unless isRollup}}\nutility2-comment -->\n<script src=\"assets.utility2.rollup.js\"></script>\n<script src=\"jsonp.utility2._stateInit?callback=window.utility2._stateInit\"></script>\n<script src=\"assets.npmtest_pjax.rollup.js\"></script>\n<script src=\"assets.example.js\"></script>\n<script src=\"assets.test.js\"></script>\n<!-- utility2-comment\n{{/if isRollup}}\nutility2-comment -->\n<div class=\"utility2FooterDiv\">\n    [ this app was created with\n    <a href=\"https://github.com/kaizhu256/node-utility2\" target=\"_blank\">utility2</a>\n    ]\n</div>\n</body>\n</html>\n"},"env":{"NODE_ENV":"test","npm_package_description":"#### test coverage for [pjax (v0.2.4)](https://github.com/MoOx/pjax#readme) [![npm package](https://img.shields.io/npm/v/npmtest-pjax.svg?style=flat-square)](https://www.npmjs.org/package/npmtest-pjax) [![travis-ci.org build-status](https://api.travis-ci.org/npmtest/node-npmtest-pjax.svg)](https://travis-ci.org/npmtest/node-npmtest-pjax)","npm_package_homepage":"https://github.com/npmtest/node-npmtest-pjax","npm_package_name":"npmtest-pjax","npm_package_nameAlias":"npmtest_pjax","npm_package_version":"0.0.1"}}});
+local._stateInit({"utility2":{"assetsDict":{"/assets.index.template.html":"<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{{env.npm_package_name}} (v{{env.npm_package_version}})</title>\n<style>\n/*csslint\n    box-sizing: false,\n    universal-selector: false\n*/\n* {\n    box-sizing: border-box;\n}\nbody {\n    background: #dde;\n    font-family: Arial, Helvetica, sans-serif;\n    margin: 2rem;\n}\nbody > * {\n    margin-bottom: 1rem;\n}\n.utility2FooterDiv {\n    margin-top: 20px;\n    text-align: center;\n}\n</style>\n<style>\n/*csslint\n*/\ntextarea {\n    font-family: monospace;\n    height: 10rem;\n    width: 100%;\n}\ntextarea[readonly] {\n    background: #ddd;\n}\n</style>\n</head>\n<body>\n<!-- utility2-comment\n<div id=\"ajaxProgressDiv1\" style=\"background: #d00; height: 2px; left: 0; margin: 0; padding: 0; position: fixed; top: 0; transition: background 0.5s, width 1.5s; width: 25%;\"></div>\nutility2-comment -->\n<h1>\n<!-- utility2-comment\n    <a\n        {{#if env.npm_package_homepage}}\n        href=\"{{env.npm_package_homepage}}\"\n        {{/if env.npm_package_homepage}}\n        target=\"_blank\"\n    >\nutility2-comment -->\n        {{env.npm_package_name}} (v{{env.npm_package_version}})\n<!-- utility2-comment\n    </a>\nutility2-comment -->\n</h1>\n<h3>{{env.npm_package_description}}</h3>\n<!-- utility2-comment\n<h4><a download href=\"assets.app.js\">download standalone app</a></h4>\n<button class=\"onclick onreset\" id=\"testRunButton1\">run internal test</button><br>\n<div id=\"testReportDiv1\" style=\"display: none;\"></div>\nutility2-comment -->\n\n\n\n<label>stderr and stdout</label>\n<textarea class=\"resettable\" id=\"outputTextareaStdout1\" readonly></textarea>\n<!-- utility2-comment\n{{#if isRollup}}\n<script src=\"assets.app.js\"></script>\n{{#unless isRollup}}\nutility2-comment -->\n<script src=\"assets.utility2.rollup.js\"></script>\n<script src=\"jsonp.utility2._stateInit?callback=window.utility2._stateInit\"></script>\n<script src=\"assets.npmtest_pjax.rollup.js\"></script>\n<script src=\"assets.example.js\"></script>\n<script src=\"assets.test.js\"></script>\n<!-- utility2-comment\n{{/if isRollup}}\nutility2-comment -->\n<div class=\"utility2FooterDiv\">\n    [ this app was created with\n    <a href=\"https://github.com/kaizhu256/node-utility2\" target=\"_blank\">utility2</a>\n    ]\n</div>\n</body>\n</html>\n"},"env":{"NODE_ENV":"test","npm_package_description":"#### basic test coverage for [pjax (v0.2.4)](https://github.com/MoOx/pjax#readme) [![npm package](https://img.shields.io/npm/v/npmtest-pjax.svg?style=flat-square)](https://www.npmjs.org/package/npmtest-pjax) [![travis-ci.org build-status](https://api.travis-ci.org/npmtest/node-npmtest-pjax.svg)](https://travis-ci.org/npmtest/node-npmtest-pjax)","npm_package_homepage":"https://github.com/npmtest/node-npmtest-pjax","npm_package_name":"npmtest-pjax","npm_package_nameAlias":"npmtest_pjax","npm_package_version":"0.0.1"}}});
 /* jslint-ignore-end */
 }());
 /* script-end local._stateInit */
@@ -19938,40 +20110,590 @@ local._stateInit({"utility2":{"assetsDict":{"/assets.index.template.html":"<!doc
 
 
 /* script-begin /assets.lib.js */
-var __cov_76eab892d1f99 = (Function('return this'))();
-if (!__cov_76eab892d1f99.__coverage__) { __cov_76eab892d1f99.__coverage__ = {}; }
-__cov_76eab892d1f99 = __cov_76eab892d1f99.__coverage__;
-if (!(__cov_76eab892d1f99['/home/travis/build/npmtest/node-npmtest-pjax/lib.npmtest_pjax.js'])) {
-   __cov_76eab892d1f99['/home/travis/build/npmtest/node-npmtest-pjax/lib.npmtest_pjax.js'] = {"path":"/home/travis/build/npmtest/node-npmtest-pjax/lib.npmtest_pjax.js","s":{"1":0,"2":0,"3":0,"4":0,"5":0,"6":0,"7":0,"8":0,"9":0,"10":0,"11":0,"12":0,"13":0,"14":0,"15":0,"16":0},"b":{"1":[0,0,0,0],"2":[0,0,0,0],"3":[0,0],"4":[0,0],"5":[0,0]},"f":{"1":0,"2":0,"3":0},"fnMap":{"1":{"name":"(anonymous_1)","line":12,"loc":{"start":{"line":12,"column":1},"end":{"line":12,"column":13}}},"2":{"name":"(anonymous_2)","line":19,"loc":{"start":{"line":19,"column":5},"end":{"line":19,"column":17}}},"3":{"name":"(anonymous_3)","line":23,"loc":{"start":{"line":23,"column":24},"end":{"line":23,"column":36}}}},"statementMap":{"1":{"start":{"line":12,"column":0},"end":{"line":53,"column":5}},"2":{"start":{"line":14,"column":4},"end":{"line":14,"column":14}},"3":{"start":{"line":19,"column":4},"end":{"line":52,"column":9}},"4":{"start":{"line":21,"column":8},"end":{"line":21,"column":19}},"5":{"start":{"line":23,"column":8},"end":{"line":35,"column":13}},"6":{"start":{"line":24,"column":12},"end":{"line":34,"column":13}},"7":{"start":{"line":25,"column":16},"end":{"line":28,"column":30}},"8":{"start":{"line":30,"column":16},"end":{"line":33,"column":27}},"9":{"start":{"line":37,"column":8},"end":{"line":39,"column":21}},"10":{"start":{"line":41,"column":8},"end":{"line":41,"column":54}},"11":{"start":{"line":43,"column":8},"end":{"line":43,"column":49}},"12":{"start":{"line":45,"column":8},"end":{"line":51,"column":9}},"13":{"start":{"line":46,"column":12},"end":{"line":46,"column":55}},"14":{"start":{"line":48,"column":12},"end":{"line":48,"column":35}},"15":{"start":{"line":49,"column":12},"end":{"line":49,"column":49}},"16":{"start":{"line":50,"column":12},"end":{"line":50,"column":43}}},"branchMap":{"1":{"line":25,"type":"binary-expr","locations":[{"start":{"line":25,"column":23},"end":{"line":25,"column":62}},{"start":{"line":26,"column":20},"end":{"line":26,"column":70}},{"start":{"line":27,"column":20},"end":{"line":27,"column":71}},{"start":{"line":28,"column":20},"end":{"line":28,"column":29}}]},"2":{"line":30,"type":"binary-expr","locations":[{"start":{"line":30,"column":23},"end":{"line":30,"column":37}},{"start":{"line":31,"column":20},"end":{"line":31,"column":61}},{"start":{"line":32,"column":20},"end":{"line":32,"column":70}},{"start":{"line":33,"column":20},"end":{"line":33,"column":26}}]},"3":{"line":37,"type":"cond-expr","locations":[{"start":{"line":38,"column":14},"end":{"line":38,"column":20}},{"start":{"line":39,"column":14},"end":{"line":39,"column":20}}]},"4":{"line":41,"type":"binary-expr","locations":[{"start":{"line":41,"column":16},"end":{"line":41,"column":44}},{"start":{"line":41,"column":48},"end":{"line":41,"column":53}}]},"5":{"line":45,"type":"if","locations":[{"start":{"line":45,"column":8},"end":{"line":45,"column":8}},{"start":{"line":45,"column":8},"end":{"line":45,"column":8}}]}},"code":["/* istanbul instrument in package npmtest_pjax */","/*jslint","    bitwise: true,","    browser: true,","    maxerr: 8,","    maxlen: 96,","    node: true,","    nomen: true,","    regexp: true,","    stupid: true","*/","(function () {","    'use strict';","    var local;","","","","    // run shared js-env code - pre-init","    (function () {","        // init local","        local = {};","        // init modeJs","        local.modeJs = (function () {","            try {","                return typeof navigator.userAgent === 'string' &&","                    typeof document.querySelector('body') === 'object' &&","                    typeof XMLHttpRequest.prototype.open === 'function' &&","                    'browser';","            } catch (errorCaughtBrowser) {","                return module.exports &&","                    typeof process.versions.node === 'string' &&","                    typeof require('http').createServer === 'function' &&","                    'node';","            }","        }());","        // init global","        local.global = local.modeJs === 'browser'","            ? window","            : global;","        // init utility2_rollup","        local = local.global.utility2_rollup || local;","        // init lib","        local.local = local.npmtest_pjax = local;","        // init exports","        if (local.modeJs === 'browser') {","            local.global.utility2_npmtest_pjax = local;","        } else {","            module.exports = local;","            module.exports.__dirname = __dirname;","            module.exports.module = module;","        }","    }());","}());",""]};
-}
-__cov_76eab892d1f99 = __cov_76eab892d1f99['/home/travis/build/npmtest/node-npmtest-pjax/lib.npmtest_pjax.js'];
-__cov_76eab892d1f99.s['1']++;(function(){'use strict';__cov_76eab892d1f99.f['1']++;__cov_76eab892d1f99.s['2']++;var local;__cov_76eab892d1f99.s['3']++;(function(){__cov_76eab892d1f99.f['2']++;__cov_76eab892d1f99.s['4']++;local={};__cov_76eab892d1f99.s['5']++;local.modeJs=function(){__cov_76eab892d1f99.f['3']++;__cov_76eab892d1f99.s['6']++;try{__cov_76eab892d1f99.s['7']++;return(__cov_76eab892d1f99.b['1'][0]++,typeof navigator.userAgent==='string')&&(__cov_76eab892d1f99.b['1'][1]++,typeof document.querySelector('body')==='object')&&(__cov_76eab892d1f99.b['1'][2]++,typeof XMLHttpRequest.prototype.open==='function')&&(__cov_76eab892d1f99.b['1'][3]++,'browser');}catch(errorCaughtBrowser){__cov_76eab892d1f99.s['8']++;return(__cov_76eab892d1f99.b['2'][0]++,module.exports)&&(__cov_76eab892d1f99.b['2'][1]++,typeof process.versions.node==='string')&&(__cov_76eab892d1f99.b['2'][2]++,typeof require('http').createServer==='function')&&(__cov_76eab892d1f99.b['2'][3]++,'node');}}();__cov_76eab892d1f99.s['9']++;local.global=local.modeJs==='browser'?(__cov_76eab892d1f99.b['3'][0]++,window):(__cov_76eab892d1f99.b['3'][1]++,global);__cov_76eab892d1f99.s['10']++;local=(__cov_76eab892d1f99.b['4'][0]++,local.global.utility2_rollup)||(__cov_76eab892d1f99.b['4'][1]++,local);__cov_76eab892d1f99.s['11']++;local.local=local.npmtest_pjax=local;__cov_76eab892d1f99.s['12']++;if(local.modeJs==='browser'){__cov_76eab892d1f99.b['5'][0]++;__cov_76eab892d1f99.s['13']++;local.global.utility2_npmtest_pjax=local;}else{__cov_76eab892d1f99.b['5'][1]++;__cov_76eab892d1f99.s['14']++;module.exports=local;__cov_76eab892d1f99.s['15']++;module.exports.__dirname=__dirname;__cov_76eab892d1f99.s['16']++;module.exports.module=module;}}());}());
+/* istanbul instrument in package npmtest_pjax */
+/*jslint
+    bitwise: true,
+    browser: true,
+    maxerr: 8,
+    maxlen: 96,
+    node: true,
+    nomen: true,
+    regexp: true,
+    stupid: true
+*/
+(function () {
+    'use strict';
+    var local;
+
+
+
+    // run shared js-env code - init-before
+    (function () {
+        // init local
+        local = {};
+        // init modeJs
+        local.modeJs = (function () {
+            try {
+                return typeof navigator.userAgent === 'string' &&
+                    typeof document.querySelector('body') === 'object' &&
+                    typeof XMLHttpRequest.prototype.open === 'function' &&
+                    'browser';
+            } catch (errorCaughtBrowser) {
+                return module.exports &&
+                    typeof process.versions.node === 'string' &&
+                    typeof require('http').createServer === 'function' &&
+                    'node';
+            }
+        }());
+        // init global
+        local.global = local.modeJs === 'browser'
+            ? window
+            : global;
+        // init utility2_rollup
+        local = local.global.utility2_rollup || local;
+        // init lib
+        local.local = local.npmtest_pjax = local;
+        // init exports
+        if (local.modeJs === 'browser') {
+            local.global.utility2_npmtest_pjax = local;
+        } else {
+            module.exports = local;
+            module.exports.__dirname = __dirname;
+            module.exports.module = module;
+        }
+    }());
+}());
 /* script-end /assets.lib.js */
 
 
 
 /* script-begin /assets.example.js */
-var __cov_3f2367cf29d5a = (Function('return this'))();
-if (!__cov_3f2367cf29d5a.__coverage__) { __cov_3f2367cf29d5a.__coverage__ = {}; }
-__cov_3f2367cf29d5a = __cov_3f2367cf29d5a.__coverage__;
-if (!(__cov_3f2367cf29d5a['/home/travis/build/npmtest/node-npmtest-pjax/example.js'])) {
-   __cov_3f2367cf29d5a['/home/travis/build/npmtest/node-npmtest-pjax/example.js'] = {"path":"/home/travis/build/npmtest/node-npmtest-pjax/example.js","s":{"1":0,"2":0,"3":0,"4":0,"5":0,"6":0,"7":0,"8":0,"9":0,"10":0,"11":0,"12":0,"13":0,"14":0,"15":0,"16":0,"17":0,"18":0,"19":0,"20":0,"21":0,"22":0,"23":0,"24":0,"25":0,"26":0,"27":0,"28":0,"29":0,"30":0,"31":0,"32":0,"33":0,"34":0,"35":0,"36":0,"37":0,"38":0,"39":0,"40":0,"41":0,"42":0,"43":0,"44":0,"45":0,"46":0,"47":0,"48":0,"49":0,"50":0,"51":0,"52":0,"53":0,"54":0,"55":0,"56":0,"57":0,"58":0,"59":0,"60":0,"61":0,"62":0,"63":0,"64":0,"65":0,"66":0,"67":0,"68":0,"69":0,"70":0,"71":0,"72":0,"73":0,"74":0,"75":0,"76":0,"77":0,"78":0,"79":0,"80":0,"81":0,"82":0,"83":0},"b":{"1":[0,0,0,0],"2":[0,0,0,0],"3":[0,0],"4":[0,0],"5":[0,0],"6":[0,0],"7":[0,0],"8":[0,0,0,0,0,0],"9":[0,0,0],"10":[0,0],"11":[0,0,0],"12":[0,0],"13":[0,0],"14":[0,0,0,0,0,0,0],"15":[0,0],"16":[0,0],"17":[0,0],"18":[0,0],"19":[0,0,0,0],"20":[0,0],"21":[0,0],"22":[0,0],"23":[0,0],"24":[0,0],"25":[0,0],"26":[0,0],"27":[0,0],"28":[0,0]},"f":{"1":0,"2":0,"3":0,"4":0,"5":0,"6":0,"7":0,"8":0,"9":0,"10":0,"11":0,"12":0},"fnMap":{"1":{"name":"(anonymous_1)","line":26,"loc":{"start":{"line":26,"column":1},"end":{"line":26,"column":13}}},"2":{"name":"(anonymous_2)","line":33,"loc":{"start":{"line":33,"column":5},"end":{"line":33,"column":17}}},"3":{"name":"(anonymous_3)","line":37,"loc":{"start":{"line":37,"column":24},"end":{"line":37,"column":36}}},"4":{"name":"(anonymous_4)","line":69,"loc":{"start":{"line":69,"column":31},"end":{"line":69,"column":48}},"skip":true},"5":{"name":"(anonymous_5)","line":78,"loc":{"start":{"line":78,"column":26},"end":{"line":78,"column":45}},"skip":true},"6":{"name":"(anonymous_6)","line":123,"loc":{"start":{"line":123,"column":33},"end":{"line":123,"column":48}},"skip":true},"7":{"name":"(anonymous_7)","line":125,"loc":{"start":{"line":125,"column":27},"end":{"line":125,"column":39}},"skip":true},"8":{"name":"(anonymous_8)","line":133,"loc":{"start":{"line":133,"column":59},"end":{"line":133,"column":74}},"skip":true},"9":{"name":"(anonymous_9)","line":143,"loc":{"start":{"line":143,"column":45},"end":{"line":143,"column":62}},"skip":true},"10":{"name":"(anonymous_10)","line":144,"loc":{"start":{"line":144,"column":73},"end":{"line":144,"column":92}},"skip":true},"11":{"name":"(anonymous_11)","line":272,"loc":{"start":{"line":272,"column":51},"end":{"line":272,"column":77}},"skip":true},"12":{"name":"(anonymous_12)","line":314,"loc":{"start":{"line":314,"column":32},"end":{"line":314,"column":61}},"skip":true}},"statementMap":{"1":{"start":{"line":26,"column":0},"end":{"line":325,"column":5}},"2":{"start":{"line":28,"column":4},"end":{"line":28,"column":14}},"3":{"start":{"line":33,"column":4},"end":{"line":60,"column":9}},"4":{"start":{"line":35,"column":8},"end":{"line":35,"column":19}},"5":{"start":{"line":37,"column":8},"end":{"line":49,"column":13}},"6":{"start":{"line":38,"column":12},"end":{"line":48,"column":13}},"7":{"start":{"line":39,"column":16},"end":{"line":42,"column":30}},"8":{"start":{"line":44,"column":16},"end":{"line":47,"column":27}},"9":{"start":{"line":51,"column":8},"end":{"line":53,"column":21}},"10":{"start":{"line":55,"column":8},"end":{"line":57,"column":45}},"11":{"start":{"line":59,"column":8},"end":{"line":59,"column":35}},"12":{"start":{"line":61,"column":4},"end":{"line":324,"column":5}},"13":{"start":{"line":69,"column":8},"end":{"line":121,"column":10},"skip":true},"14":{"start":{"line":70,"column":12},"end":{"line":88,"column":13},"skip":true},"15":{"start":{"line":76,"column":16},"end":{"line":87,"column":19},"skip":true},"16":{"start":{"line":79,"column":20},"end":{"line":86,"column":21},"skip":true},"17":{"start":{"line":82,"column":24},"end":{"line":82,"column":43},"skip":true},"18":{"start":{"line":83,"column":24},"end":{"line":83,"column":30},"skip":true},"19":{"start":{"line":85,"column":24},"end":{"line":85,"column":49},"skip":true},"20":{"start":{"line":89,"column":12},"end":{"line":107,"column":13},"skip":true},"21":{"start":{"line":92,"column":16},"end":{"line":102,"column":17},"skip":true},"22":{"start":{"line":93,"column":20},"end":{"line":93,"column":86},"skip":true},"23":{"start":{"line":94,"column":20},"end":{"line":95,"column":45},"skip":true},"24":{"start":{"line":96,"column":20},"end":{"line":96,"column":42},"skip":true},"25":{"start":{"line":97,"column":20},"end":{"line":97,"column":48},"skip":true},"26":{"start":{"line":100,"column":20},"end":{"line":100,"column":85},"skip":true},"27":{"start":{"line":101,"column":20},"end":{"line":101,"column":96},"skip":true},"28":{"start":{"line":103,"column":16},"end":{"line":103,"column":22},"skip":true},"29":{"start":{"line":106,"column":16},"end":{"line":106,"column":22},"skip":true},"30":{"start":{"line":108,"column":12},"end":{"line":120,"column":13},"skip":true},"31":{"start":{"line":114,"column":16},"end":{"line":119,"column":17},"skip":true},"32":{"start":{"line":116,"column":20},"end":{"line":116,"column":78},"skip":true},"33":{"start":{"line":118,"column":20},"end":{"line":118,"column":47},"skip":true},"34":{"start":{"line":123,"column":8},"end":{"line":141,"column":11},"skip":true},"35":{"start":{"line":124,"column":12},"end":{"line":124,"column":54},"skip":true},"36":{"start":{"line":125,"column":12},"end":{"line":140,"column":14},"skip":true},"37":{"start":{"line":126,"column":16},"end":{"line":126,"column":28},"skip":true},"38":{"start":{"line":127,"column":16},"end":{"line":127,"column":69},"skip":true},"39":{"start":{"line":128,"column":16},"end":{"line":128,"column":75},"skip":true},"40":{"start":{"line":129,"column":16},"end":{"line":131,"column":17},"skip":true},"41":{"start":{"line":130,"column":20},"end":{"line":130,"column":27},"skip":true},"42":{"start":{"line":133,"column":16},"end":{"line":137,"column":36},"skip":true},"43":{"start":{"line":134,"column":20},"end":{"line":136,"column":55},"skip":true},"44":{"start":{"line":139,"column":16},"end":{"line":139,"column":57},"skip":true},"45":{"start":{"line":143,"column":8},"end":{"line":147,"column":11},"skip":true},"46":{"start":{"line":144,"column":12},"end":{"line":146,"column":15},"skip":true},"47":{"start":{"line":145,"column":16},"end":{"line":145,"column":70},"skip":true},"48":{"start":{"line":149,"column":8},"end":{"line":149,"column":31},"skip":true},"49":{"start":{"line":150,"column":8},"end":{"line":150,"column":14},"skip":true},"50":{"start":{"line":158,"column":8},"end":{"line":158,"column":31},"skip":true},"51":{"start":{"line":160,"column":8},"end":{"line":160,"column":33},"skip":true},"52":{"start":{"line":161,"column":8},"end":{"line":161,"column":37},"skip":true},"53":{"start":{"line":162,"column":8},"end":{"line":162,"column":35},"skip":true},"54":{"start":{"line":164,"column":8},"end":{"line":164,"column":50},"skip":true},"55":{"start":{"line":166,"column":8},"end":{"line":256,"column":2},"skip":true},"56":{"start":{"line":258,"column":8},"end":{"line":286,"column":9},"skip":true},"57":{"start":{"line":259,"column":12},"end":{"line":269,"column":14},"skip":true},"58":{"start":{"line":271,"column":12},"end":{"line":285,"column":19},"skip":true},"59":{"start":{"line":274,"column":20},"end":{"line":274,"column":35},"skip":true},"60":{"start":{"line":275,"column":20},"end":{"line":284,"column":21},"skip":true},"61":{"start":{"line":277,"column":24},"end":{"line":277,"column":64},"skip":true},"62":{"start":{"line":279,"column":24},"end":{"line":279,"column":40},"skip":true},"63":{"start":{"line":281,"column":24},"end":{"line":281,"column":40},"skip":true},"64":{"start":{"line":283,"column":24},"end":{"line":283,"column":39},"skip":true},"65":{"start":{"line":288,"column":8},"end":{"line":290,"column":9},"skip":true},"66":{"start":{"line":289,"column":12},"end":{"line":289,"column":18},"skip":true},"67":{"start":{"line":291,"column":8},"end":{"line":293,"column":54},"skip":true},"68":{"start":{"line":294,"column":8},"end":{"line":301,"column":37},"skip":true},"69":{"start":{"line":302,"column":8},"end":{"line":302,"column":82},"skip":true},"70":{"start":{"line":305,"column":8},"end":{"line":307,"column":9},"skip":true},"71":{"start":{"line":306,"column":12},"end":{"line":306,"column":82},"skip":true},"72":{"start":{"line":309,"column":8},"end":{"line":311,"column":9},"skip":true},"73":{"start":{"line":310,"column":12},"end":{"line":310,"column":18},"skip":true},"74":{"start":{"line":312,"column":8},"end":{"line":312,"column":54},"skip":true},"75":{"start":{"line":313,"column":8},"end":{"line":313,"column":69},"skip":true},"76":{"start":{"line":314,"column":8},"end":{"line":322,"column":36},"skip":true},"77":{"start":{"line":315,"column":12},"end":{"line":315,"column":61},"skip":true},"78":{"start":{"line":316,"column":12},"end":{"line":319,"column":13},"skip":true},"79":{"start":{"line":317,"column":16},"end":{"line":317,"column":75},"skip":true},"80":{"start":{"line":318,"column":16},"end":{"line":318,"column":23},"skip":true},"81":{"start":{"line":320,"column":12},"end":{"line":320,"column":38},"skip":true},"82":{"start":{"line":321,"column":12},"end":{"line":321,"column":27},"skip":true},"83":{"start":{"line":323,"column":8},"end":{"line":323,"column":14},"skip":true}},"branchMap":{"1":{"line":39,"type":"binary-expr","locations":[{"start":{"line":39,"column":23},"end":{"line":39,"column":62}},{"start":{"line":40,"column":20},"end":{"line":40,"column":70}},{"start":{"line":41,"column":20},"end":{"line":41,"column":71}},{"start":{"line":42,"column":20},"end":{"line":42,"column":29}}]},"2":{"line":44,"type":"binary-expr","locations":[{"start":{"line":44,"column":23},"end":{"line":44,"column":37}},{"start":{"line":45,"column":20},"end":{"line":45,"column":61}},{"start":{"line":46,"column":20},"end":{"line":46,"column":70}},{"start":{"line":47,"column":20},"end":{"line":47,"column":26}}]},"3":{"line":51,"type":"cond-expr","locations":[{"start":{"line":52,"column":14},"end":{"line":52,"column":20}},{"start":{"line":53,"column":14},"end":{"line":53,"column":20}}]},"4":{"line":55,"type":"binary-expr","locations":[{"start":{"line":55,"column":16},"end":{"line":55,"column":44}},{"start":{"line":55,"column":49},"end":{"line":57,"column":43}}]},"5":{"line":55,"type":"cond-expr","locations":[{"start":{"line":56,"column":14},"end":{"line":56,"column":48}},{"start":{"line":57,"column":14},"end":{"line":57,"column":43}}]},"6":{"line":61,"type":"switch","locations":[{"start":{"line":68,"column":4},"end":{"line":150,"column":14},"skip":true},{"start":{"line":156,"column":4},"end":{"line":323,"column":14},"skip":true}]},"7":{"line":70,"type":"if","locations":[{"start":{"line":70,"column":12},"end":{"line":70,"column":12},"skip":true},{"start":{"line":70,"column":12},"end":{"line":70,"column":12},"skip":true}]},"8":{"line":70,"type":"binary-expr","locations":[{"start":{"line":70,"column":16},"end":{"line":70,"column":22},"skip":true},{"start":{"line":70,"column":27},"end":{"line":70,"column":32},"skip":true},{"start":{"line":71,"column":20},"end":{"line":71,"column":39},"skip":true},{"start":{"line":72,"column":20},"end":{"line":72,"column":49},"skip":true},{"start":{"line":73,"column":20},"end":{"line":73,"column":58},"skip":true},{"start":{"line":74,"column":20},"end":{"line":74,"column":69},"skip":true}]},"9":{"line":79,"type":"switch","locations":[{"start":{"line":80,"column":20},"end":{"line":80,"column":33},"skip":true},{"start":{"line":81,"column":20},"end":{"line":83,"column":30},"skip":true},{"start":{"line":84,"column":20},"end":{"line":85,"column":49},"skip":true}]},"10":{"line":89,"type":"switch","locations":[{"start":{"line":90,"column":12},"end":{"line":103,"column":22},"skip":true},{"start":{"line":105,"column":12},"end":{"line":106,"column":22},"skip":true}]},"11":{"line":89,"type":"binary-expr","locations":[{"start":{"line":89,"column":20},"end":{"line":89,"column":25},"skip":true},{"start":{"line":89,"column":29},"end":{"line":89,"column":48},"skip":true},{"start":{"line":89,"column":52},"end":{"line":89,"column":74},"skip":true}]},"12":{"line":92,"type":"if","locations":[{"start":{"line":92,"column":16},"end":{"line":92,"column":16},"skip":true},{"start":{"line":92,"column":16},"end":{"line":92,"column":16},"skip":true}]},"13":{"line":108,"type":"if","locations":[{"start":{"line":108,"column":12},"end":{"line":108,"column":12},"skip":true},{"start":{"line":108,"column":12},"end":{"line":108,"column":12},"skip":true}]},"14":{"line":108,"type":"binary-expr","locations":[{"start":{"line":108,"column":16},"end":{"line":108,"column":61},"skip":true},{"start":{"line":108,"column":66},"end":{"line":108,"column":72},"skip":true},{"start":{"line":108,"column":77},"end":{"line":108,"column":82},"skip":true},{"start":{"line":109,"column":20},"end":{"line":109,"column":39},"skip":true},{"start":{"line":110,"column":20},"end":{"line":110,"column":49},"skip":true},{"start":{"line":111,"column":20},"end":{"line":111,"column":58},"skip":true},{"start":{"line":112,"column":20},"end":{"line":112,"column":68},"skip":true}]},"15":{"line":129,"type":"if","locations":[{"start":{"line":129,"column":16},"end":{"line":129,"column":16},"skip":true},{"start":{"line":129,"column":16},"end":{"line":129,"column":16},"skip":true}]},"16":{"line":134,"type":"cond-expr","locations":[{"start":{"line":135,"column":26},"end":{"line":135,"column":29},"skip":true},{"start":{"line":136,"column":26},"end":{"line":136,"column":54},"skip":true}]},"17":{"line":164,"type":"binary-expr","locations":[{"start":{"line":164,"column":27},"end":{"line":164,"column":43},"skip":true},{"start":{"line":164,"column":47},"end":{"line":164,"column":49},"skip":true}]},"18":{"line":258,"type":"if","locations":[{"start":{"line":258,"column":8},"end":{"line":258,"column":8},"skip":true},{"start":{"line":258,"column":8},"end":{"line":258,"column":8},"skip":true}]},"19":{"line":275,"type":"switch","locations":[{"start":{"line":276,"column":20},"end":{"line":277,"column":64},"skip":true},{"start":{"line":278,"column":20},"end":{"line":279,"column":40},"skip":true},{"start":{"line":280,"column":20},"end":{"line":281,"column":40},"skip":true},{"start":{"line":282,"column":20},"end":{"line":283,"column":39},"skip":true}]},"20":{"line":288,"type":"if","locations":[{"start":{"line":288,"column":8},"end":{"line":288,"column":8},"skip":true},{"start":{"line":288,"column":8},"end":{"line":288,"column":8},"skip":true}]},"21":{"line":288,"type":"binary-expr","locations":[{"start":{"line":288,"column":12},"end":{"line":288,"column":40},"skip":true},{"start":{"line":288,"column":44},"end":{"line":288,"column":67},"skip":true}]},"22":{"line":292,"type":"binary-expr","locations":[{"start":{"line":292,"column":12},"end":{"line":292,"column":50},"skip":true},{"start":{"line":293,"column":12},"end":{"line":293,"column":53},"skip":true}]},"23":{"line":295,"type":"binary-expr","locations":[{"start":{"line":295,"column":12},"end":{"line":295,"column":62},"skip":true},{"start":{"line":296,"column":12},"end":{"line":301,"column":36},"skip":true}]},"24":{"line":302,"type":"binary-expr","locations":[{"start":{"line":302,"column":43},"end":{"line":302,"column":75},"skip":true},{"start":{"line":302,"column":79},"end":{"line":302,"column":81},"skip":true}]},"25":{"line":305,"type":"if","locations":[{"start":{"line":305,"column":8},"end":{"line":305,"column":8},"skip":true},{"start":{"line":305,"column":8},"end":{"line":305,"column":8},"skip":true}]},"26":{"line":309,"type":"if","locations":[{"start":{"line":309,"column":8},"end":{"line":309,"column":8},"skip":true},{"start":{"line":309,"column":8},"end":{"line":309,"column":8},"skip":true}]},"27":{"line":312,"type":"binary-expr","locations":[{"start":{"line":312,"column":27},"end":{"line":312,"column":43},"skip":true},{"start":{"line":312,"column":47},"end":{"line":312,"column":53},"skip":true}]},"28":{"line":316,"type":"if","locations":[{"start":{"line":316,"column":12},"end":{"line":316,"column":12},"skip":true},{"start":{"line":316,"column":12},"end":{"line":316,"column":12},"skip":true}]}},"code":["/*","example.js","","quickstart example","","instruction","    1. save this script as example.js","    2. run the shell command:","        $ npm install npmtest-pjax && PORT=8081 node example.js","    3. play with the browser-demo on http://127.0.0.1:8081","*/","","","","/* istanbul instrument in package npmtest_pjax */","/*jslint","    bitwise: true,","    browser: true,","    maxerr: 8,","    maxlen: 96,","    node: true,","    nomen: true,","    regexp: true,","    stupid: true","*/","(function () {","    'use strict';","    var local;","","","","    // run shared js-env code - pre-init","    (function () {","        // init local","        local = {};","        // init modeJs","        local.modeJs = (function () {","            try {","                return typeof navigator.userAgent === 'string' &&","                    typeof document.querySelector('body') === 'object' &&","                    typeof XMLHttpRequest.prototype.open === 'function' &&","                    'browser';","            } catch (errorCaughtBrowser) {","                return module.exports &&","                    typeof process.versions.node === 'string' &&","                    typeof require('http').createServer === 'function' &&","                    'node';","            }","        }());","        // init global","        local.global = local.modeJs === 'browser'","            ? window","            : global;","        // init utility2_rollup","        local = local.global.utility2_rollup || (local.modeJs === 'browser'","            ? local.global.utility2_npmtest_pjax","            : global.utility2_moduleExports);","        // export local","        local.global.local = local;","    }());","    switch (local.modeJs) {","","","","    // post-init","    // run browser js-env code - post-init","    /* istanbul ignore next */","    case 'browser':","        local.testRunBrowser = function (event) {","            if (!event || (event &&","                    event.currentTarget &&","                    event.currentTarget.className &&","                    event.currentTarget.className.includes &&","                    event.currentTarget.className.includes('onreset'))) {","                // reset output","                Array.from(","                    document.querySelectorAll('body > .resettable')","                ).forEach(function (element) {","                    switch (element.tagName) {","                    case 'INPUT':","                    case 'TEXTAREA':","                        element.value = '';","                        break;","                    default:","                        element.textContent = '';","                    }","                });","            }","            switch (event && event.currentTarget && event.currentTarget.id) {","            case 'testRunButton1':","                // show tests","                if (document.querySelector('#testReportDiv1').style.display === 'none') {","                    document.querySelector('#testReportDiv1').style.display = 'block';","                    document.querySelector('#testRunButton1').textContent =","                        'hide internal test';","                    local.modeTest = true;","                    local.testRunDefault(local);","                // hide tests","                } else {","                    document.querySelector('#testReportDiv1').style.display = 'none';","                    document.querySelector('#testRunButton1').textContent = 'run internal test';","                }","                break;","            // custom-case","            default:","                break;","            }","            if (document.querySelector('#inputTextareaEval1') && (!event || (event &&","                    event.currentTarget &&","                    event.currentTarget.className &&","                    event.currentTarget.className.includes &&","                    event.currentTarget.className.includes('oneval')))) {","                // try to eval input-code","                try {","                    /*jslint evil: true*/","                    eval(document.querySelector('#inputTextareaEval1').value);","                } catch (errorCaught) {","                    console.error(errorCaught);","                }","            }","        };","        // log stderr and stdout to #outputTextareaStdout1","        ['error', 'log'].forEach(function (key) {","            console[key + '_original'] = console[key];","            console[key] = function () {","                var element;","                console[key + '_original'].apply(console, arguments);","                element = document.querySelector('#outputTextareaStdout1');","                if (!element) {","                    return;","                }","                // append text to #outputTextareaStdout1","                element.value += Array.from(arguments).map(function (arg) {","                    return typeof arg === 'string'","                        ? arg","                        : JSON.stringify(arg, null, 4);","                }).join(' ') + '\\n';","                // scroll textarea to bottom","                element.scrollTop = element.scrollHeight;","            };","        });","        // init event-handling","        ['change', 'click', 'keyup'].forEach(function (event) {","            Array.from(document.querySelectorAll('.on' + event)).forEach(function (element) {","                element.addEventListener(event, local.testRunBrowser);","            });","        });","        // run tests","        local.testRunBrowser();","        break;","","","","    // run node js-env code - post-init","    /* istanbul ignore next */","    case 'node':","        // export local","        module.exports = local;","        // require modules","        local.fs = require('fs');","        local.http = require('http');","        local.url = require('url');","        // init assets","        local.assetsDict = local.assetsDict || {};","        /* jslint-ignore-begin */","        local.assetsDict['/assets.index.template.html'] = '\\","<!doctype html>\\n\\","<html lang=\"en\">\\n\\","<head>\\n\\","<meta charset=\"UTF-8\">\\n\\","<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\\n\\","<title>{{env.npm_package_name}} (v{{env.npm_package_version}})</title>\\n\\","<style>\\n\\","/*csslint\\n\\","    box-sizing: false,\\n\\","    universal-selector: false\\n\\","*/\\n\\","* {\\n\\","    box-sizing: border-box;\\n\\","}\\n\\","body {\\n\\","    background: #dde;\\n\\","    font-family: Arial, Helvetica, sans-serif;\\n\\","    margin: 2rem;\\n\\","}\\n\\","body > * {\\n\\","    margin-bottom: 1rem;\\n\\","}\\n\\",".utility2FooterDiv {\\n\\","    margin-top: 20px;\\n\\","    text-align: center;\\n\\","}\\n\\","</style>\\n\\","<style>\\n\\","/*csslint\\n\\","*/\\n\\","textarea {\\n\\","    font-family: monospace;\\n\\","    height: 10rem;\\n\\","    width: 100%;\\n\\","}\\n\\","textarea[readonly] {\\n\\","    background: #ddd;\\n\\","}\\n\\","</style>\\n\\","</head>\\n\\","<body>\\n\\","<!-- utility2-comment\\n\\","<div id=\"ajaxProgressDiv1\" style=\"background: #d00; height: 2px; left: 0; margin: 0; padding: 0; position: fixed; top: 0; transition: background 0.5s, width 1.5s; width: 25%;\"></div>\\n\\","utility2-comment -->\\n\\","<h1>\\n\\","<!-- utility2-comment\\n\\","    <a\\n\\","        {{#if env.npm_package_homepage}}\\n\\","        href=\"{{env.npm_package_homepage}}\"\\n\\","        {{/if env.npm_package_homepage}}\\n\\","        target=\"_blank\"\\n\\","    >\\n\\","utility2-comment -->\\n\\","        {{env.npm_package_name}} (v{{env.npm_package_version}})\\n\\","<!-- utility2-comment\\n\\","    </a>\\n\\","utility2-comment -->\\n\\","</h1>\\n\\","<h3>{{env.npm_package_description}}</h3>\\n\\","<!-- utility2-comment\\n\\","<h4><a download href=\"assets.app.js\">download standalone app</a></h4>\\n\\","<button class=\"onclick onreset\" id=\"testRunButton1\">run internal test</button><br>\\n\\","<div id=\"testReportDiv1\" style=\"display: none;\"></div>\\n\\","utility2-comment -->\\n\\","\\n\\","\\n\\","\\n\\","<label>stderr and stdout</label>\\n\\","<textarea class=\"resettable\" id=\"outputTextareaStdout1\" readonly></textarea>\\n\\","<!-- utility2-comment\\n\\","{{#if isRollup}}\\n\\","<script src=\"assets.app.js\"></script>\\n\\","{{#unless isRollup}}\\n\\","utility2-comment -->\\n\\","<script src=\"assets.utility2.rollup.js\"></script>\\n\\","<script src=\"jsonp.utility2._stateInit?callback=window.utility2._stateInit\"></script>\\n\\","<script src=\"assets.npmtest_pjax.rollup.js\"></script>\\n\\","<script src=\"assets.example.js\"></script>\\n\\","<script src=\"assets.test.js\"></script>\\n\\","<!-- utility2-comment\\n\\","{{/if isRollup}}\\n\\","utility2-comment -->\\n\\","<div class=\"utility2FooterDiv\">\\n\\","    [ this app was created with\\n\\","    <a href=\"https://github.com/kaizhu256/node-utility2\" target=\"_blank\">utility2</a>\\n\\","    ]\\n\\","</div>\\n\\","</body>\\n\\","</html>\\n\\","';","        /* jslint-ignore-end */","        if (local.templateRender) {","            local.assetsDict['/'] = local.templateRender(","                local.assetsDict['/assets.index.template.html'],","                {","                    env: local.objectSetDefault(local.env, {","                        npm_package_description: 'the greatest app in the world!',","                        npm_package_name: 'my-app',","                        npm_package_nameAlias: 'my_app',","                        npm_package_version: '0.0.1'","                    })","                }","            );","        } else {","            local.assetsDict['/'] = local.assetsDict['/assets.index.template.html']","                .replace((/\\{\\{env\\.(\\w+?)\\}\\}/g), function (match0, match1) {","                    // jslint-hack","                    String(match0);","                    switch (match1) {","                    case 'npm_package_description':","                        return 'the greatest app in the world!';","                    case 'npm_package_name':","                        return 'my-app';","                    case 'npm_package_nameAlias':","                        return 'my_app';","                    case 'npm_package_version':","                        return '0.0.1';","                    }","                });","        }","        // run the cli","        if (local.global.utility2_rollup || module !== require.main) {","            break;","        }","        local.assetsDict['/assets.example.js'] =","            local.assetsDict['/assets.example.js'] ||","            local.fs.readFileSync(__filename, 'utf8');","        local.assetsDict['/assets.npmtest_pjax.rollup.js'] =","            local.assetsDict['/assets.npmtest_pjax.rollup.js'] ||","            local.fs.readFileSync(","                // buildCustomOrg-hack","                local.npmtest_pjax.__dirname +","                    '/lib.npmtest_pjax.js',","                'utf8'","            ).replace((/^#!/), '//');","        local.assetsDict['/favicon.ico'] = local.assetsDict['/favicon.ico'] || '';","        // if $npm_config_timeout_exit exists,","        // then exit this process after $npm_config_timeout_exit ms","        if (Number(process.env.npm_config_timeout_exit)) {","            setTimeout(process.exit, Number(process.env.npm_config_timeout_exit));","        }","        // start server","        if (local.global.utility2_serverHttp1) {","            break;","        }","        process.env.PORT = process.env.PORT || '8081';","        console.error('server starting on port ' + process.env.PORT);","        local.http.createServer(function (request, response) {","            request.urlParsed = local.url.parse(request.url);","            if (local.assetsDict[request.urlParsed.pathname] !== undefined) {","                response.end(local.assetsDict[request.urlParsed.pathname]);","                return;","            }","            response.statusCode = 404;","            response.end();","        }).listen(process.env.PORT);","        break;","    }","}());",""]};
-}
-__cov_3f2367cf29d5a = __cov_3f2367cf29d5a['/home/travis/build/npmtest/node-npmtest-pjax/example.js'];
-__cov_3f2367cf29d5a.s['1']++;(function(){'use strict';__cov_3f2367cf29d5a.f['1']++;__cov_3f2367cf29d5a.s['2']++;var local;__cov_3f2367cf29d5a.s['3']++;(function(){__cov_3f2367cf29d5a.f['2']++;__cov_3f2367cf29d5a.s['4']++;local={};__cov_3f2367cf29d5a.s['5']++;local.modeJs=function(){__cov_3f2367cf29d5a.f['3']++;__cov_3f2367cf29d5a.s['6']++;try{__cov_3f2367cf29d5a.s['7']++;return(__cov_3f2367cf29d5a.b['1'][0]++,typeof navigator.userAgent==='string')&&(__cov_3f2367cf29d5a.b['1'][1]++,typeof document.querySelector('body')==='object')&&(__cov_3f2367cf29d5a.b['1'][2]++,typeof XMLHttpRequest.prototype.open==='function')&&(__cov_3f2367cf29d5a.b['1'][3]++,'browser');}catch(errorCaughtBrowser){__cov_3f2367cf29d5a.s['8']++;return(__cov_3f2367cf29d5a.b['2'][0]++,module.exports)&&(__cov_3f2367cf29d5a.b['2'][1]++,typeof process.versions.node==='string')&&(__cov_3f2367cf29d5a.b['2'][2]++,typeof require('http').createServer==='function')&&(__cov_3f2367cf29d5a.b['2'][3]++,'node');}}();__cov_3f2367cf29d5a.s['9']++;local.global=local.modeJs==='browser'?(__cov_3f2367cf29d5a.b['3'][0]++,window):(__cov_3f2367cf29d5a.b['3'][1]++,global);__cov_3f2367cf29d5a.s['10']++;local=(__cov_3f2367cf29d5a.b['4'][0]++,local.global.utility2_rollup)||(__cov_3f2367cf29d5a.b['4'][1]++,local.modeJs==='browser'?(__cov_3f2367cf29d5a.b['5'][0]++,local.global.utility2_npmtest_pjax):(__cov_3f2367cf29d5a.b['5'][1]++,global.utility2_moduleExports));__cov_3f2367cf29d5a.s['11']++;local.global.local=local;}());__cov_3f2367cf29d5a.s['12']++;switch(local.modeJs){case'browser':__cov_3f2367cf29d5a.b['6'][0]++;__cov_3f2367cf29d5a.s['13']++;local.testRunBrowser=function(event){__cov_3f2367cf29d5a.f['4']++;__cov_3f2367cf29d5a.s['14']++;if((__cov_3f2367cf29d5a.b['8'][0]++,!event)||(__cov_3f2367cf29d5a.b['8'][1]++,event)&&(__cov_3f2367cf29d5a.b['8'][2]++,event.currentTarget)&&(__cov_3f2367cf29d5a.b['8'][3]++,event.currentTarget.className)&&(__cov_3f2367cf29d5a.b['8'][4]++,event.currentTarget.className.includes)&&(__cov_3f2367cf29d5a.b['8'][5]++,event.currentTarget.className.includes('onreset'))){__cov_3f2367cf29d5a.b['7'][0]++;__cov_3f2367cf29d5a.s['15']++;Array.from(document.querySelectorAll('body > .resettable')).forEach(function(element){__cov_3f2367cf29d5a.f['5']++;__cov_3f2367cf29d5a.s['16']++;switch(element.tagName){case'INPUT':__cov_3f2367cf29d5a.b['9'][0]++;case'TEXTAREA':__cov_3f2367cf29d5a.b['9'][1]++;__cov_3f2367cf29d5a.s['17']++;element.value='';__cov_3f2367cf29d5a.s['18']++;break;default:__cov_3f2367cf29d5a.b['9'][2]++;__cov_3f2367cf29d5a.s['19']++;element.textContent='';}});}else{__cov_3f2367cf29d5a.b['7'][1]++;}__cov_3f2367cf29d5a.s['20']++;switch((__cov_3f2367cf29d5a.b['11'][0]++,event)&&(__cov_3f2367cf29d5a.b['11'][1]++,event.currentTarget)&&(__cov_3f2367cf29d5a.b['11'][2]++,event.currentTarget.id)){case'testRunButton1':__cov_3f2367cf29d5a.b['10'][0]++;__cov_3f2367cf29d5a.s['21']++;if(document.querySelector('#testReportDiv1').style.display==='none'){__cov_3f2367cf29d5a.b['12'][0]++;__cov_3f2367cf29d5a.s['22']++;document.querySelector('#testReportDiv1').style.display='block';__cov_3f2367cf29d5a.s['23']++;document.querySelector('#testRunButton1').textContent='hide internal test';__cov_3f2367cf29d5a.s['24']++;local.modeTest=true;__cov_3f2367cf29d5a.s['25']++;local.testRunDefault(local);}else{__cov_3f2367cf29d5a.b['12'][1]++;__cov_3f2367cf29d5a.s['26']++;document.querySelector('#testReportDiv1').style.display='none';__cov_3f2367cf29d5a.s['27']++;document.querySelector('#testRunButton1').textContent='run internal test';}__cov_3f2367cf29d5a.s['28']++;break;default:__cov_3f2367cf29d5a.b['10'][1]++;__cov_3f2367cf29d5a.s['29']++;break;}__cov_3f2367cf29d5a.s['30']++;if((__cov_3f2367cf29d5a.b['14'][0]++,document.querySelector('#inputTextareaEval1'))&&((__cov_3f2367cf29d5a.b['14'][1]++,!event)||(__cov_3f2367cf29d5a.b['14'][2]++,event)&&(__cov_3f2367cf29d5a.b['14'][3]++,event.currentTarget)&&(__cov_3f2367cf29d5a.b['14'][4]++,event.currentTarget.className)&&(__cov_3f2367cf29d5a.b['14'][5]++,event.currentTarget.className.includes)&&(__cov_3f2367cf29d5a.b['14'][6]++,event.currentTarget.className.includes('oneval')))){__cov_3f2367cf29d5a.b['13'][0]++;__cov_3f2367cf29d5a.s['31']++;try{__cov_3f2367cf29d5a.s['32']++;eval(document.querySelector('#inputTextareaEval1').value);}catch(errorCaught){__cov_3f2367cf29d5a.s['33']++;console.error(errorCaught);}}else{__cov_3f2367cf29d5a.b['13'][1]++;}};__cov_3f2367cf29d5a.s['34']++;['error','log'].forEach(function(key){__cov_3f2367cf29d5a.f['6']++;__cov_3f2367cf29d5a.s['35']++;console[key+'_original']=console[key];__cov_3f2367cf29d5a.s['36']++;console[key]=function(){__cov_3f2367cf29d5a.f['7']++;__cov_3f2367cf29d5a.s['37']++;var element;__cov_3f2367cf29d5a.s['38']++;console[key+'_original'].apply(console,arguments);__cov_3f2367cf29d5a.s['39']++;element=document.querySelector('#outputTextareaStdout1');__cov_3f2367cf29d5a.s['40']++;if(!element){__cov_3f2367cf29d5a.b['15'][0]++;__cov_3f2367cf29d5a.s['41']++;return;}else{__cov_3f2367cf29d5a.b['15'][1]++;}__cov_3f2367cf29d5a.s['42']++;element.value+=Array.from(arguments).map(function(arg){__cov_3f2367cf29d5a.f['8']++;__cov_3f2367cf29d5a.s['43']++;return typeof arg==='string'?(__cov_3f2367cf29d5a.b['16'][0]++,arg):(__cov_3f2367cf29d5a.b['16'][1]++,JSON.stringify(arg,null,4));}).join(' ')+'\n';__cov_3f2367cf29d5a.s['44']++;element.scrollTop=element.scrollHeight;};});__cov_3f2367cf29d5a.s['45']++;['change','click','keyup'].forEach(function(event){__cov_3f2367cf29d5a.f['9']++;__cov_3f2367cf29d5a.s['46']++;Array.from(document.querySelectorAll('.on'+event)).forEach(function(element){__cov_3f2367cf29d5a.f['10']++;__cov_3f2367cf29d5a.s['47']++;element.addEventListener(event,local.testRunBrowser);});});__cov_3f2367cf29d5a.s['48']++;local.testRunBrowser();__cov_3f2367cf29d5a.s['49']++;break;case'node':__cov_3f2367cf29d5a.b['6'][1]++;__cov_3f2367cf29d5a.s['50']++;module.exports=local;__cov_3f2367cf29d5a.s['51']++;local.fs=require('fs');__cov_3f2367cf29d5a.s['52']++;local.http=require('http');__cov_3f2367cf29d5a.s['53']++;local.url=require('url');__cov_3f2367cf29d5a.s['54']++;local.assetsDict=(__cov_3f2367cf29d5a.b['17'][0]++,local.assetsDict)||(__cov_3f2367cf29d5a.b['17'][1]++,{});__cov_3f2367cf29d5a.s['55']++;local.assetsDict['/assets.index.template.html']='<!doctype html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>{{env.npm_package_name}} (v{{env.npm_package_version}})</title>\n<style>\n/*csslint\n    box-sizing: false,\n    universal-selector: false\n*/\n* {\n    box-sizing: border-box;\n}\nbody {\n    background: #dde;\n    font-family: Arial, Helvetica, sans-serif;\n    margin: 2rem;\n}\nbody > * {\n    margin-bottom: 1rem;\n}\n.utility2FooterDiv {\n    margin-top: 20px;\n    text-align: center;\n}\n</style>\n<style>\n/*csslint\n*/\ntextarea {\n    font-family: monospace;\n    height: 10rem;\n    width: 100%;\n}\ntextarea[readonly] {\n    background: #ddd;\n}\n</style>\n</head>\n<body>\n<!-- utility2-comment\n<div id="ajaxProgressDiv1" style="background: #d00; height: 2px; left: 0; margin: 0; padding: 0; position: fixed; top: 0; transition: background 0.5s, width 1.5s; width: 25%;"></div>\nutility2-comment -->\n<h1>\n<!-- utility2-comment\n    <a\n        {{#if env.npm_package_homepage}}\n        href="{{env.npm_package_homepage}}"\n        {{/if env.npm_package_homepage}}\n        target="_blank"\n    >\nutility2-comment -->\n        {{env.npm_package_name}} (v{{env.npm_package_version}})\n<!-- utility2-comment\n    </a>\nutility2-comment -->\n</h1>\n<h3>{{env.npm_package_description}}</h3>\n<!-- utility2-comment\n<h4><a download href="assets.app.js">download standalone app</a></h4>\n<button class="onclick onreset" id="testRunButton1">run internal test</button><br>\n<div id="testReportDiv1" style="display: none;"></div>\nutility2-comment -->\n\n\n\n<label>stderr and stdout</label>\n<textarea class="resettable" id="outputTextareaStdout1" readonly></textarea>\n<!-- utility2-comment\n{{#if isRollup}}\n<script src="assets.app.js"></script>\n{{#unless isRollup}}\nutility2-comment -->\n<script src="assets.utility2.rollup.js"></script>\n<script src="jsonp.utility2._stateInit?callback=window.utility2._stateInit"></script>\n<script src="assets.npmtest_pjax.rollup.js"></script>\n<script src="assets.example.js"></script>\n<script src="assets.test.js"></script>\n<!-- utility2-comment\n{{/if isRollup}}\nutility2-comment -->\n<div class="utility2FooterDiv">\n    [ this app was created with\n    <a href="https://github.com/kaizhu256/node-utility2" target="_blank">utility2</a>\n    ]\n</div>\n</body>\n</html>\n';__cov_3f2367cf29d5a.s['56']++;if(local.templateRender){__cov_3f2367cf29d5a.b['18'][0]++;__cov_3f2367cf29d5a.s['57']++;local.assetsDict['/']=local.templateRender(local.assetsDict['/assets.index.template.html'],{env:local.objectSetDefault(local.env,{npm_package_description:'the greatest app in the world!',npm_package_name:'my-app',npm_package_nameAlias:'my_app',npm_package_version:'0.0.1'})});}else{__cov_3f2367cf29d5a.b['18'][1]++;__cov_3f2367cf29d5a.s['58']++;local.assetsDict['/']=local.assetsDict['/assets.index.template.html'].replace(/\{\{env\.(\w+?)\}\}/g,function(match0,match1){__cov_3f2367cf29d5a.f['11']++;__cov_3f2367cf29d5a.s['59']++;String(match0);__cov_3f2367cf29d5a.s['60']++;switch(match1){case'npm_package_description':__cov_3f2367cf29d5a.b['19'][0]++;__cov_3f2367cf29d5a.s['61']++;return'the greatest app in the world!';case'npm_package_name':__cov_3f2367cf29d5a.b['19'][1]++;__cov_3f2367cf29d5a.s['62']++;return'my-app';case'npm_package_nameAlias':__cov_3f2367cf29d5a.b['19'][2]++;__cov_3f2367cf29d5a.s['63']++;return'my_app';case'npm_package_version':__cov_3f2367cf29d5a.b['19'][3]++;__cov_3f2367cf29d5a.s['64']++;return'0.0.1';}});}__cov_3f2367cf29d5a.s['65']++;if((__cov_3f2367cf29d5a.b['21'][0]++,local.global.utility2_rollup)||(__cov_3f2367cf29d5a.b['21'][1]++,module!==require.main)){__cov_3f2367cf29d5a.b['20'][0]++;__cov_3f2367cf29d5a.s['66']++;break;}else{__cov_3f2367cf29d5a.b['20'][1]++;}__cov_3f2367cf29d5a.s['67']++;local.assetsDict['/assets.example.js']=(__cov_3f2367cf29d5a.b['22'][0]++,local.assetsDict['/assets.example.js'])||(__cov_3f2367cf29d5a.b['22'][1]++,local.fs.readFileSync(__filename,'utf8'));__cov_3f2367cf29d5a.s['68']++;local.assetsDict['/assets.npmtest_pjax.rollup.js']=(__cov_3f2367cf29d5a.b['23'][0]++,local.assetsDict['/assets.npmtest_pjax.rollup.js'])||(__cov_3f2367cf29d5a.b['23'][1]++,local.fs.readFileSync(local.npmtest_pjax.__dirname+'/lib.npmtest_pjax.js','utf8').replace(/^#!/,'//'));__cov_3f2367cf29d5a.s['69']++;local.assetsDict['/favicon.ico']=(__cov_3f2367cf29d5a.b['24'][0]++,local.assetsDict['/favicon.ico'])||(__cov_3f2367cf29d5a.b['24'][1]++,'');__cov_3f2367cf29d5a.s['70']++;if(Number(process.env.npm_config_timeout_exit)){__cov_3f2367cf29d5a.b['25'][0]++;__cov_3f2367cf29d5a.s['71']++;setTimeout(process.exit,Number(process.env.npm_config_timeout_exit));}else{__cov_3f2367cf29d5a.b['25'][1]++;}__cov_3f2367cf29d5a.s['72']++;if(local.global.utility2_serverHttp1){__cov_3f2367cf29d5a.b['26'][0]++;__cov_3f2367cf29d5a.s['73']++;break;}else{__cov_3f2367cf29d5a.b['26'][1]++;}__cov_3f2367cf29d5a.s['74']++;process.env.PORT=(__cov_3f2367cf29d5a.b['27'][0]++,process.env.PORT)||(__cov_3f2367cf29d5a.b['27'][1]++,'8081');__cov_3f2367cf29d5a.s['75']++;console.error('server starting on port '+process.env.PORT);__cov_3f2367cf29d5a.s['76']++;local.http.createServer(function(request,response){__cov_3f2367cf29d5a.f['12']++;__cov_3f2367cf29d5a.s['77']++;request.urlParsed=local.url.parse(request.url);__cov_3f2367cf29d5a.s['78']++;if(local.assetsDict[request.urlParsed.pathname]!==undefined){__cov_3f2367cf29d5a.b['28'][0]++;__cov_3f2367cf29d5a.s['79']++;response.end(local.assetsDict[request.urlParsed.pathname]);__cov_3f2367cf29d5a.s['80']++;return;}else{__cov_3f2367cf29d5a.b['28'][1]++;}__cov_3f2367cf29d5a.s['81']++;response.statusCode=404;__cov_3f2367cf29d5a.s['82']++;response.end();}).listen(process.env.PORT);__cov_3f2367cf29d5a.s['83']++;break;}}());
+/*
+example.js
+
+quickstart example
+
+instruction
+    1. save this script as example.js
+    2. run the shell command:
+        $ npm install npmtest-pjax && PORT=8081 node example.js
+    3. play with the browser-demo on http://127.0.0.1:8081
+*/
+
+
+
+/* istanbul instrument in package npmtest_pjax */
+/*jslint
+    bitwise: true,
+    browser: true,
+    maxerr: 8,
+    maxlen: 96,
+    node: true,
+    nomen: true,
+    regexp: true,
+    stupid: true
+*/
+(function () {
+    'use strict';
+    var local;
+
+
+
+    // run shared js-env code - init-before
+    (function () {
+        // init local
+        local = {};
+        // init modeJs
+        local.modeJs = (function () {
+            try {
+                return typeof navigator.userAgent === 'string' &&
+                    typeof document.querySelector('body') === 'object' &&
+                    typeof XMLHttpRequest.prototype.open === 'function' &&
+                    'browser';
+            } catch (errorCaughtBrowser) {
+                return module.exports &&
+                    typeof process.versions.node === 'string' &&
+                    typeof require('http').createServer === 'function' &&
+                    'node';
+            }
+        }());
+        // init global
+        local.global = local.modeJs === 'browser'
+            ? window
+            : global;
+        // init utility2_rollup
+        local = local.global.utility2_rollup || (local.modeJs === 'browser'
+            ? local.global.utility2_npmtest_pjax
+            : global.utility2_moduleExports);
+        // export local
+        local.global.local = local;
+    }());
+    switch (local.modeJs) {
+
+
+
+    // init-after
+    // run browser js-env code - init-after
+    /* istanbul ignore next */
+    case 'browser':
+        local.testRunBrowser = function (event) {
+            if (!event || (event &&
+                    event.currentTarget &&
+                    event.currentTarget.className &&
+                    event.currentTarget.className.includes &&
+                    event.currentTarget.className.includes('onreset'))) {
+                // reset output
+                Array.from(
+                    document.querySelectorAll('body > .resettable')
+                ).forEach(function (element) {
+                    switch (element.tagName) {
+                    case 'INPUT':
+                    case 'TEXTAREA':
+                        element.value = '';
+                        break;
+                    default:
+                        element.textContent = '';
+                    }
+                });
+            }
+            switch (event && event.currentTarget && event.currentTarget.id) {
+            case 'testRunButton1':
+                // show tests
+                if (document.querySelector('#testReportDiv1').style.display === 'none') {
+                    document.querySelector('#testReportDiv1').style.display = 'block';
+                    document.querySelector('#testRunButton1').textContent =
+                        'hide internal test';
+                    local.modeTest = true;
+                    local.testRunDefault(local);
+                // hide tests
+                } else {
+                    document.querySelector('#testReportDiv1').style.display = 'none';
+                    document.querySelector('#testRunButton1').textContent = 'run internal test';
+                }
+                break;
+            // custom-case
+            default:
+                break;
+            }
+            if (document.querySelector('#inputTextareaEval1') && (!event || (event &&
+                    event.currentTarget &&
+                    event.currentTarget.className &&
+                    event.currentTarget.className.includes &&
+                    event.currentTarget.className.includes('oneval')))) {
+                // try to eval input-code
+                try {
+                    /*jslint evil: true*/
+                    eval(document.querySelector('#inputTextareaEval1').value);
+                } catch (errorCaught) {
+                    console.error(errorCaught);
+                }
+            }
+        };
+        // log stderr and stdout to #outputTextareaStdout1
+        ['error', 'log'].forEach(function (key) {
+            console[key + '_original'] = console[key];
+            console[key] = function () {
+                var element;
+                console[key + '_original'].apply(console, arguments);
+                element = document.querySelector('#outputTextareaStdout1');
+                if (!element) {
+                    return;
+                }
+                // append text to #outputTextareaStdout1
+                element.value += Array.from(arguments).map(function (arg) {
+                    return typeof arg === 'string'
+                        ? arg
+                        : JSON.stringify(arg, null, 4);
+                }).join(' ') + '\n';
+                // scroll textarea to bottom
+                element.scrollTop = element.scrollHeight;
+            };
+        });
+        // init event-handling
+        ['change', 'click', 'keyup'].forEach(function (event) {
+            Array.from(document.querySelectorAll('.on' + event)).forEach(function (element) {
+                element.addEventListener(event, local.testRunBrowser);
+            });
+        });
+        // run tests
+        local.testRunBrowser();
+        break;
+
+
+
+    // run node js-env code - init-after
+    /* istanbul ignore next */
+    case 'node':
+        // export local
+        module.exports = local;
+        // require modules
+        local.fs = require('fs');
+        local.http = require('http');
+        local.url = require('url');
+        // init assets
+        local.assetsDict = local.assetsDict || {};
+        /* jslint-ignore-begin */
+        local.assetsDict['/assets.index.template.html'] = '\
+<!doctype html>\n\
+<html lang="en">\n\
+<head>\n\
+<meta charset="UTF-8">\n\
+<meta name="viewport" content="width=device-width, initial-scale=1">\n\
+<title>{{env.npm_package_name}} (v{{env.npm_package_version}})</title>\n\
+<style>\n\
+/*csslint\n\
+    box-sizing: false,\n\
+    universal-selector: false\n\
+*/\n\
+* {\n\
+    box-sizing: border-box;\n\
+}\n\
+body {\n\
+    background: #dde;\n\
+    font-family: Arial, Helvetica, sans-serif;\n\
+    margin: 2rem;\n\
+}\n\
+body > * {\n\
+    margin-bottom: 1rem;\n\
+}\n\
+.utility2FooterDiv {\n\
+    margin-top: 20px;\n\
+    text-align: center;\n\
+}\n\
+</style>\n\
+<style>\n\
+/*csslint\n\
+*/\n\
+textarea {\n\
+    font-family: monospace;\n\
+    height: 10rem;\n\
+    width: 100%;\n\
+}\n\
+textarea[readonly] {\n\
+    background: #ddd;\n\
+}\n\
+</style>\n\
+</head>\n\
+<body>\n\
+<!-- utility2-comment\n\
+<div id="ajaxProgressDiv1" style="background: #d00; height: 2px; left: 0; margin: 0; padding: 0; position: fixed; top: 0; transition: background 0.5s, width 1.5s; width: 25%;"></div>\n\
+utility2-comment -->\n\
+<h1>\n\
+<!-- utility2-comment\n\
+    <a\n\
+        {{#if env.npm_package_homepage}}\n\
+        href="{{env.npm_package_homepage}}"\n\
+        {{/if env.npm_package_homepage}}\n\
+        target="_blank"\n\
+    >\n\
+utility2-comment -->\n\
+        {{env.npm_package_name}} (v{{env.npm_package_version}})\n\
+<!-- utility2-comment\n\
+    </a>\n\
+utility2-comment -->\n\
+</h1>\n\
+<h3>{{env.npm_package_description}}</h3>\n\
+<!-- utility2-comment\n\
+<h4><a download href="assets.app.js">download standalone app</a></h4>\n\
+<button class="onclick onreset" id="testRunButton1">run internal test</button><br>\n\
+<div id="testReportDiv1" style="display: none;"></div>\n\
+utility2-comment -->\n\
+\n\
+\n\
+\n\
+<label>stderr and stdout</label>\n\
+<textarea class="resettable" id="outputTextareaStdout1" readonly></textarea>\n\
+<!-- utility2-comment\n\
+{{#if isRollup}}\n\
+<script src="assets.app.js"></script>\n\
+{{#unless isRollup}}\n\
+utility2-comment -->\n\
+<script src="assets.utility2.rollup.js"></script>\n\
+<script src="jsonp.utility2._stateInit?callback=window.utility2._stateInit"></script>\n\
+<script src="assets.npmtest_pjax.rollup.js"></script>\n\
+<script src="assets.example.js"></script>\n\
+<script src="assets.test.js"></script>\n\
+<!-- utility2-comment\n\
+{{/if isRollup}}\n\
+utility2-comment -->\n\
+<div class="utility2FooterDiv">\n\
+    [ this app was created with\n\
+    <a href="https://github.com/kaizhu256/node-utility2" target="_blank">utility2</a>\n\
+    ]\n\
+</div>\n\
+</body>\n\
+</html>\n\
+';
+        /* jslint-ignore-end */
+        if (local.templateRender) {
+            local.assetsDict['/'] = local.templateRender(
+                local.assetsDict['/assets.index.template.html'],
+                {
+                    env: local.objectSetDefault(local.env, {
+                        npm_package_description: 'the greatest app in the world!',
+                        npm_package_name: 'my-app',
+                        npm_package_nameAlias: 'my_app',
+                        npm_package_version: '0.0.1'
+                    })
+                }
+            );
+        } else {
+            local.assetsDict['/'] = local.assetsDict['/assets.index.template.html']
+                .replace((/\{\{env\.(\w+?)\}\}/g), function (match0, match1) {
+                    // jslint-hack
+                    String(match0);
+                    switch (match1) {
+                    case 'npm_package_description':
+                        return 'the greatest app in the world!';
+                    case 'npm_package_name':
+                        return 'my-app';
+                    case 'npm_package_nameAlias':
+                        return 'my_app';
+                    case 'npm_package_version':
+                        return '0.0.1';
+                    }
+                });
+        }
+        // run the cli
+        if (local.global.utility2_rollup || module !== require.main) {
+            break;
+        }
+        local.assetsDict['/assets.example.js'] =
+            local.assetsDict['/assets.example.js'] ||
+            local.fs.readFileSync(__filename, 'utf8');
+        // bug-workaround - long $npm_package_buildCustomOrg
+        /* jslint-ignore-begin */
+        local.assetsDict['/assets.npmtest_pjax.rollup.js'] =
+            local.assetsDict['/assets.npmtest_pjax.rollup.js'] ||
+            local.fs.readFileSync(
+                local.npmtest_pjax.__dirname + '/lib.npmtest_pjax.js',
+                'utf8'
+            ).replace((/^#!/), '//');
+        /* jslint-ignore-end */
+        local.assetsDict['/favicon.ico'] = local.assetsDict['/favicon.ico'] || '';
+        // if $npm_config_timeout_exit exists,
+        // then exit this process after $npm_config_timeout_exit ms
+        if (Number(process.env.npm_config_timeout_exit)) {
+            setTimeout(process.exit, Number(process.env.npm_config_timeout_exit));
+        }
+        // start server
+        if (local.global.utility2_serverHttp1) {
+            break;
+        }
+        process.env.PORT = process.env.PORT || '8081';
+        console.error('server starting on port ' + process.env.PORT);
+        local.http.createServer(function (request, response) {
+            request.urlParsed = local.url.parse(request.url);
+            if (local.assetsDict[request.urlParsed.pathname] !== undefined) {
+                response.end(local.assetsDict[request.urlParsed.pathname]);
+                return;
+            }
+            response.statusCode = 404;
+            response.end();
+        }).listen(process.env.PORT);
+        break;
+    }
+}());
 /* script-end /assets.example.js */
 
 
 
 /* script-begin /assets.test.js */
-var __cov_bd93501e30592 = (Function('return this'))();
-if (!__cov_bd93501e30592.__coverage__) { __cov_bd93501e30592.__coverage__ = {}; }
-__cov_bd93501e30592 = __cov_bd93501e30592.__coverage__;
-if (!(__cov_bd93501e30592['/home/travis/build/npmtest/node-npmtest-pjax/test.js'])) {
-   __cov_bd93501e30592['/home/travis/build/npmtest/node-npmtest-pjax/test.js'] = {"path":"/home/travis/build/npmtest/node-npmtest-pjax/test.js","s":{"1":0,"2":0,"3":0,"4":0,"5":0,"6":0,"7":0,"8":0,"9":0,"10":0,"11":0,"12":0,"13":0,"14":0,"15":0,"16":0,"17":0,"18":0,"19":0,"20":0,"21":0,"22":0,"23":0,"24":0,"25":0,"26":0,"27":0,"28":0,"29":0,"30":0,"31":0,"32":0,"33":0,"34":0,"35":0,"36":0,"37":0,"38":0,"39":0,"40":0,"41":0,"42":0,"43":0,"44":0,"45":0,"46":0,"47":0,"48":0,"49":0,"50":0,"51":0,"52":0,"53":0,"54":0},"b":{"1":[0,0,0,0],"2":[0,0,0,0],"3":[0,0],"4":[0,0],"5":[0,0],"6":[0,0],"7":[0,0],"8":[0,0],"9":[0,0],"10":[0,0,0],"11":[0,0],"12":[0,0],"13":[0,0],"14":[0,0],"15":[0,0],"16":[0,0],"17":[0,0]},"f":{"1":0,"2":0,"3":0,"4":0,"5":0,"6":0,"7":0,"8":0,"9":0,"10":0,"11":0,"12":0,"13":0},"fnMap":{"1":{"name":"(anonymous_1)","line":12,"loc":{"start":{"line":12,"column":1},"end":{"line":12,"column":13}}},"2":{"name":"(anonymous_2)","line":19,"loc":{"start":{"line":19,"column":5},"end":{"line":19,"column":17}}},"3":{"name":"(anonymous_3)","line":23,"loc":{"start":{"line":23,"column":24},"end":{"line":23,"column":36}}},"4":{"name":"(anonymous_4)","line":61,"loc":{"start":{"line":61,"column":5},"end":{"line":61,"column":17}}},"5":{"name":"(anonymous_5)","line":82,"loc":{"start":{"line":82,"column":5},"end":{"line":82,"column":17}}},"6":{"name":"(anonymous_6)","line":91,"loc":{"start":{"line":91,"column":77},"end":{"line":94,"column":10}}},"7":{"name":"(anonymous_7)","line":112,"loc":{"start":{"line":112,"column":83},"end":{"line":115,"column":10}},"skip":true},"8":{"name":"(anonymous_8)","line":123,"loc":{"start":{"line":123,"column":77},"end":{"line":126,"column":10}},"skip":true},"9":{"name":"(anonymous_9)","line":139,"loc":{"start":{"line":139,"column":12},"end":{"line":139,"column":40}},"skip":true},"10":{"name":"(anonymous_10)","line":147,"loc":{"start":{"line":147,"column":77},"end":{"line":150,"column":10}},"skip":true},"11":{"name":"(anonymous_11)","line":158,"loc":{"start":{"line":158,"column":83},"end":{"line":161,"column":10}},"skip":true},"12":{"name":"(anonymous_12)","line":169,"loc":{"start":{"line":169,"column":79},"end":{"line":172,"column":10}},"skip":true},"13":{"name":"(anonymous_13)","line":180,"loc":{"start":{"line":180,"column":75},"end":{"line":183,"column":10}},"skip":true}},"statementMap":{"1":{"start":{"line":12,"column":0},"end":{"line":195,"column":5}},"2":{"start":{"line":14,"column":4},"end":{"line":14,"column":14}},"3":{"start":{"line":19,"column":4},"end":{"line":56,"column":9}},"4":{"start":{"line":21,"column":8},"end":{"line":21,"column":19}},"5":{"start":{"line":23,"column":8},"end":{"line":35,"column":13}},"6":{"start":{"line":24,"column":12},"end":{"line":34,"column":13}},"7":{"start":{"line":25,"column":16},"end":{"line":28,"column":30}},"8":{"start":{"line":30,"column":16},"end":{"line":33,"column":27}},"9":{"start":{"line":37,"column":8},"end":{"line":39,"column":21}},"10":{"start":{"line":40,"column":8},"end":{"line":53,"column":9}},"11":{"start":{"line":43,"column":12},"end":{"line":46,"column":14}},"12":{"start":{"line":47,"column":12},"end":{"line":47,"column":18}},"13":{"start":{"line":50,"column":12},"end":{"line":51,"column":46}},"14":{"start":{"line":52,"column":12},"end":{"line":52,"column":18}},"15":{"start":{"line":55,"column":8},"end":{"line":55,"column":35}},"16":{"start":{"line":61,"column":4},"end":{"line":63,"column":9}},"17":{"start":{"line":62,"column":8},"end":{"line":62,"column":15}},"18":{"start":{"line":64,"column":4},"end":{"line":77,"column":5}},"19":{"start":{"line":70,"column":8},"end":{"line":70,"column":14}},"20":{"start":{"line":76,"column":8},"end":{"line":76,"column":14}},"21":{"start":{"line":82,"column":4},"end":{"line":84,"column":9}},"22":{"start":{"line":83,"column":8},"end":{"line":83,"column":15}},"23":{"start":{"line":85,"column":4},"end":{"line":194,"column":5}},"24":{"start":{"line":91,"column":8},"end":{"line":99,"column":10}},"25":{"start":{"line":98,"column":12},"end":{"line":98,"column":35}},"26":{"start":{"line":102,"column":8},"end":{"line":104,"column":63}},"27":{"start":{"line":105,"column":8},"end":{"line":105,"column":14}},"28":{"start":{"line":112,"column":8},"end":{"line":121,"column":10},"skip":true},"29":{"start":{"line":119,"column":12},"end":{"line":119,"column":55},"skip":true},"30":{"start":{"line":120,"column":12},"end":{"line":120,"column":48},"skip":true},"31":{"start":{"line":123,"column":8},"end":{"line":136,"column":10},"skip":true},"32":{"start":{"line":130,"column":12},"end":{"line":130,"column":76},"skip":true},"33":{"start":{"line":131,"column":12},"end":{"line":131,"column":73},"skip":true},"34":{"start":{"line":132,"column":12},"end":{"line":132,"column":74},"skip":true},"35":{"start":{"line":133,"column":12},"end":{"line":133,"column":79},"skip":true},"36":{"start":{"line":134,"column":12},"end":{"line":134,"column":25},"skip":true},"37":{"start":{"line":135,"column":12},"end":{"line":135,"column":45},"skip":true},"38":{"start":{"line":138,"column":8},"end":{"line":145,"column":14},"skip":true},"39":{"start":{"line":143,"column":16},"end":{"line":143,"column":29},"skip":true},"40":{"start":{"line":144,"column":16},"end":{"line":144,"column":55},"skip":true},"41":{"start":{"line":147,"column":8},"end":{"line":156,"column":10},"skip":true},"42":{"start":{"line":154,"column":12},"end":{"line":154,"column":25},"skip":true},"43":{"start":{"line":155,"column":12},"end":{"line":155,"column":45},"skip":true},"44":{"start":{"line":158,"column":8},"end":{"line":167,"column":10},"skip":true},"45":{"start":{"line":165,"column":12},"end":{"line":165,"column":25},"skip":true},"46":{"start":{"line":166,"column":12},"end":{"line":166,"column":48},"skip":true},"47":{"start":{"line":169,"column":8},"end":{"line":178,"column":10},"skip":true},"48":{"start":{"line":176,"column":12},"end":{"line":176,"column":25},"skip":true},"49":{"start":{"line":177,"column":12},"end":{"line":177,"column":46},"skip":true},"50":{"start":{"line":180,"column":8},"end":{"line":189,"column":10},"skip":true},"51":{"start":{"line":187,"column":12},"end":{"line":187,"column":94},"skip":true},"52":{"start":{"line":188,"column":12},"end":{"line":188,"column":48},"skip":true},"53":{"start":{"line":192,"column":8},"end":{"line":192,"column":35},"skip":true},"54":{"start":{"line":193,"column":8},"end":{"line":193,"column":14},"skip":true}},"branchMap":{"1":{"line":25,"type":"binary-expr","locations":[{"start":{"line":25,"column":23},"end":{"line":25,"column":62}},{"start":{"line":26,"column":20},"end":{"line":26,"column":70}},{"start":{"line":27,"column":20},"end":{"line":27,"column":71}},{"start":{"line":28,"column":20},"end":{"line":28,"column":29}}]},"2":{"line":30,"type":"binary-expr","locations":[{"start":{"line":30,"column":23},"end":{"line":30,"column":37}},{"start":{"line":31,"column":20},"end":{"line":31,"column":61}},{"start":{"line":32,"column":20},"end":{"line":32,"column":70}},{"start":{"line":33,"column":20},"end":{"line":33,"column":26}}]},"3":{"line":37,"type":"cond-expr","locations":[{"start":{"line":38,"column":14},"end":{"line":38,"column":20}},{"start":{"line":39,"column":14},"end":{"line":39,"column":20}}]},"4":{"line":40,"type":"switch","locations":[{"start":{"line":42,"column":8},"end":{"line":47,"column":18}},{"start":{"line":49,"column":8},"end":{"line":52,"column":18}}]},"5":{"line":44,"type":"binary-expr","locations":[{"start":{"line":44,"column":16},"end":{"line":44,"column":44}},{"start":{"line":44,"column":48},"end":{"line":44,"column":66}}]},"6":{"line":50,"type":"binary-expr","locations":[{"start":{"line":50,"column":21},"end":{"line":50,"column":49}},{"start":{"line":50,"column":53},"end":{"line":50,"column":72}}]},"7":{"line":64,"type":"switch","locations":[{"start":{"line":69,"column":4},"end":{"line":70,"column":14}},{"start":{"line":75,"column":4},"end":{"line":76,"column":14}}]},"8":{"line":85,"type":"switch","locations":[{"start":{"line":90,"column":4},"end":{"line":105,"column":14}},{"start":{"line":111,"column":4},"end":{"line":193,"column":14},"skip":true}]},"9":{"line":91,"type":"binary-expr","locations":[{"start":{"line":91,"column":42},"end":{"line":91,"column":73}},{"start":{"line":91,"column":77},"end":{"line":99,"column":9}}]},"10":{"line":102,"type":"binary-expr","locations":[{"start":{"line":102,"column":18},"end":{"line":102,"column":32}},{"start":{"line":103,"column":12},"end":{"line":103,"column":53}},{"start":{"line":104,"column":12},"end":{"line":104,"column":61}}]},"11":{"line":112,"type":"binary-expr","locations":[{"start":{"line":112,"column":45},"end":{"line":112,"column":79},"skip":true},{"start":{"line":112,"column":83},"end":{"line":121,"column":9},"skip":true}]},"12":{"line":123,"type":"binary-expr","locations":[{"start":{"line":123,"column":42},"end":{"line":123,"column":73},"skip":true},{"start":{"line":123,"column":77},"end":{"line":136,"column":9},"skip":true}]},"13":{"line":138,"type":"binary-expr","locations":[{"start":{"line":138,"column":48},"end":{"line":138,"column":85},"skip":true},{"start":{"line":139,"column":12},"end":{"line":145,"column":13},"skip":true}]},"14":{"line":147,"type":"binary-expr","locations":[{"start":{"line":147,"column":42},"end":{"line":147,"column":73},"skip":true},{"start":{"line":147,"column":77},"end":{"line":156,"column":9},"skip":true}]},"15":{"line":158,"type":"binary-expr","locations":[{"start":{"line":158,"column":45},"end":{"line":158,"column":79},"skip":true},{"start":{"line":158,"column":83},"end":{"line":167,"column":9},"skip":true}]},"16":{"line":169,"type":"binary-expr","locations":[{"start":{"line":169,"column":43},"end":{"line":169,"column":75},"skip":true},{"start":{"line":169,"column":79},"end":{"line":178,"column":9},"skip":true}]},"17":{"line":180,"type":"binary-expr","locations":[{"start":{"line":180,"column":41},"end":{"line":180,"column":71},"skip":true},{"start":{"line":180,"column":75},"end":{"line":189,"column":9},"skip":true}]}},"code":["/* istanbul instrument in package npmtest_pjax */","/*jslint","    bitwise: true,","    browser: true,","    maxerr: 8,","    maxlen: 96,","    node: true,","    nomen: true,","    regexp: true,","    stupid: true","*/","(function () {","    'use strict';","    var local;","","","","    // run shared js-env code - pre-init","    (function () {","        // init local","        local = {};","        // init modeJs","        local.modeJs = (function () {","            try {","                return typeof navigator.userAgent === 'string' &&","                    typeof document.querySelector('body') === 'object' &&","                    typeof XMLHttpRequest.prototype.open === 'function' &&","                    'browser';","            } catch (errorCaughtBrowser) {","                return module.exports &&","                    typeof process.versions.node === 'string' &&","                    typeof require('http').createServer === 'function' &&","                    'node';","            }","        }());","        // init global","        local.global = local.modeJs === 'browser'","            ? window","            : global;","        switch (local.modeJs) {","        // re-init local from window.local","        case 'browser':","            local = local.global.utility2.objectSetDefault(","                local.global.utility2_rollup || local.global.local,","                local.global.utility2","            );","            break;","        // re-init local from example.js","        case 'node':","            local = (local.global.utility2_rollup || require('utility2'))","                .requireExampleJsFromReadme();","            break;","        }","        // export local","        local.global.local = local;","    }());","","","","    // run shared js-env code - function","    (function () {","        return;","    }());","    switch (local.modeJs) {","","","","    // run browser js-env code - function","    case 'browser':","        break;","","","","    // run node js-env code - function","    case 'node':","        break;","    }","","","","    // run shared js-env code - post-init","    (function () {","        return;","    }());","    switch (local.modeJs) {","","","","    // run browser js-env code - post-init","    case 'browser':","        local.testCase_browser_nullCase = local.testCase_browser_nullCase || function (","            options,","            onError","        ) {","        /*","         * this function will test browsers's null-case handling-behavior-behavior","         */","            onError(null, options);","        };","","        // run tests","        local.nop(local.modeTest &&","            document.querySelector('#testRunButton1') &&","            document.querySelector('#testRunButton1').click());","        break;","","","","    // run node js-env code - post-init","    /* istanbul ignore next */","    case 'node':","        local.testCase_buildApidoc_default = local.testCase_buildApidoc_default || function (","            options,","            onError","        ) {","        /*","         * this function will test buildApidoc's default handling-behavior-behavior","         */","            options = { modulePathList: module.paths };","            local.buildApidoc(options, onError);","        };","","        local.testCase_buildApp_default = local.testCase_buildApp_default || function (","            options,","            onError","        ) {","        /*","         * this function will test buildApp's default handling-behavior-behavior","         */","            local.testCase_buildReadme_default(options, local.onErrorThrow);","            local.testCase_buildLib_default(options, local.onErrorThrow);","            local.testCase_buildTest_default(options, local.onErrorThrow);","            local.testCase_buildCustomOrg_default(options, local.onErrorThrow);","            options = [];","            local.buildApp(options, onError);","        };","","        local.testCase_buildCustomOrg_default = local.testCase_buildCustomOrg_default ||","            function (options, onError) {","            /*","             * this function will test buildCustomOrg's default handling-behavior","             */","                options = {};","                local.buildCustomOrg(options, onError);","            };","","        local.testCase_buildLib_default = local.testCase_buildLib_default || function (","            options,","            onError","        ) {","        /*","         * this function will test buildLib's default handling-behavior","         */","            options = {};","            local.buildLib(options, onError);","        };","","        local.testCase_buildReadme_default = local.testCase_buildReadme_default || function (","            options,","            onError","        ) {","        /*","         * this function will test buildReadme's default handling-behavior-behavior","         */","            options = {};","            local.buildReadme(options, onError);","        };","","        local.testCase_buildTest_default = local.testCase_buildTest_default || function (","            options,","            onError","        ) {","        /*","         * this function will test buildTest's default handling-behavior","         */","            options = {};","            local.buildTest(options, onError);","        };","","        local.testCase_webpage_default = local.testCase_webpage_default || function (","            options,","            onError","        ) {","        /*","         * this function will test webpage's default handling-behavior","         */","            options = { modeCoverageMerge: true, url: local.serverLocalHost + '?modeTest=1' };","            local.browserTest(options, onError);","        };","","        // run test-server","        local.testRunServer(local);","        break;","    }","}());",""]};
-}
-__cov_bd93501e30592 = __cov_bd93501e30592['/home/travis/build/npmtest/node-npmtest-pjax/test.js'];
-__cov_bd93501e30592.s['1']++;(function(){'use strict';__cov_bd93501e30592.f['1']++;__cov_bd93501e30592.s['2']++;var local;__cov_bd93501e30592.s['3']++;(function(){__cov_bd93501e30592.f['2']++;__cov_bd93501e30592.s['4']++;local={};__cov_bd93501e30592.s['5']++;local.modeJs=function(){__cov_bd93501e30592.f['3']++;__cov_bd93501e30592.s['6']++;try{__cov_bd93501e30592.s['7']++;return(__cov_bd93501e30592.b['1'][0]++,typeof navigator.userAgent==='string')&&(__cov_bd93501e30592.b['1'][1]++,typeof document.querySelector('body')==='object')&&(__cov_bd93501e30592.b['1'][2]++,typeof XMLHttpRequest.prototype.open==='function')&&(__cov_bd93501e30592.b['1'][3]++,'browser');}catch(errorCaughtBrowser){__cov_bd93501e30592.s['8']++;return(__cov_bd93501e30592.b['2'][0]++,module.exports)&&(__cov_bd93501e30592.b['2'][1]++,typeof process.versions.node==='string')&&(__cov_bd93501e30592.b['2'][2]++,typeof require('http').createServer==='function')&&(__cov_bd93501e30592.b['2'][3]++,'node');}}();__cov_bd93501e30592.s['9']++;local.global=local.modeJs==='browser'?(__cov_bd93501e30592.b['3'][0]++,window):(__cov_bd93501e30592.b['3'][1]++,global);__cov_bd93501e30592.s['10']++;switch(local.modeJs){case'browser':__cov_bd93501e30592.b['4'][0]++;__cov_bd93501e30592.s['11']++;local=local.global.utility2.objectSetDefault((__cov_bd93501e30592.b['5'][0]++,local.global.utility2_rollup)||(__cov_bd93501e30592.b['5'][1]++,local.global.local),local.global.utility2);__cov_bd93501e30592.s['12']++;break;case'node':__cov_bd93501e30592.b['4'][1]++;__cov_bd93501e30592.s['13']++;local=((__cov_bd93501e30592.b['6'][0]++,local.global.utility2_rollup)||(__cov_bd93501e30592.b['6'][1]++,require('utility2'))).requireExampleJsFromReadme();__cov_bd93501e30592.s['14']++;break;}__cov_bd93501e30592.s['15']++;local.global.local=local;}());__cov_bd93501e30592.s['16']++;(function(){__cov_bd93501e30592.f['4']++;__cov_bd93501e30592.s['17']++;return;}());__cov_bd93501e30592.s['18']++;switch(local.modeJs){case'browser':__cov_bd93501e30592.b['7'][0]++;__cov_bd93501e30592.s['19']++;break;case'node':__cov_bd93501e30592.b['7'][1]++;__cov_bd93501e30592.s['20']++;break;}__cov_bd93501e30592.s['21']++;(function(){__cov_bd93501e30592.f['5']++;__cov_bd93501e30592.s['22']++;return;}());__cov_bd93501e30592.s['23']++;switch(local.modeJs){case'browser':__cov_bd93501e30592.b['8'][0]++;__cov_bd93501e30592.s['24']++;local.testCase_browser_nullCase=(__cov_bd93501e30592.b['9'][0]++,local.testCase_browser_nullCase)||(__cov_bd93501e30592.b['9'][1]++,function(options,onError){__cov_bd93501e30592.f['6']++;__cov_bd93501e30592.s['25']++;onError(null,options);});__cov_bd93501e30592.s['26']++;local.nop((__cov_bd93501e30592.b['10'][0]++,local.modeTest)&&(__cov_bd93501e30592.b['10'][1]++,document.querySelector('#testRunButton1'))&&(__cov_bd93501e30592.b['10'][2]++,document.querySelector('#testRunButton1').click()));__cov_bd93501e30592.s['27']++;break;case'node':__cov_bd93501e30592.b['8'][1]++;__cov_bd93501e30592.s['28']++;local.testCase_buildApidoc_default=(__cov_bd93501e30592.b['11'][0]++,local.testCase_buildApidoc_default)||(__cov_bd93501e30592.b['11'][1]++,function(options,onError){__cov_bd93501e30592.f['7']++;__cov_bd93501e30592.s['29']++;options={modulePathList:module.paths};__cov_bd93501e30592.s['30']++;local.buildApidoc(options,onError);});__cov_bd93501e30592.s['31']++;local.testCase_buildApp_default=(__cov_bd93501e30592.b['12'][0]++,local.testCase_buildApp_default)||(__cov_bd93501e30592.b['12'][1]++,function(options,onError){__cov_bd93501e30592.f['8']++;__cov_bd93501e30592.s['32']++;local.testCase_buildReadme_default(options,local.onErrorThrow);__cov_bd93501e30592.s['33']++;local.testCase_buildLib_default(options,local.onErrorThrow);__cov_bd93501e30592.s['34']++;local.testCase_buildTest_default(options,local.onErrorThrow);__cov_bd93501e30592.s['35']++;local.testCase_buildCustomOrg_default(options,local.onErrorThrow);__cov_bd93501e30592.s['36']++;options=[];__cov_bd93501e30592.s['37']++;local.buildApp(options,onError);});__cov_bd93501e30592.s['38']++;local.testCase_buildCustomOrg_default=(__cov_bd93501e30592.b['13'][0]++,local.testCase_buildCustomOrg_default)||(__cov_bd93501e30592.b['13'][1]++,function(options,onError){__cov_bd93501e30592.f['9']++;__cov_bd93501e30592.s['39']++;options={};__cov_bd93501e30592.s['40']++;local.buildCustomOrg(options,onError);});__cov_bd93501e30592.s['41']++;local.testCase_buildLib_default=(__cov_bd93501e30592.b['14'][0]++,local.testCase_buildLib_default)||(__cov_bd93501e30592.b['14'][1]++,function(options,onError){__cov_bd93501e30592.f['10']++;__cov_bd93501e30592.s['42']++;options={};__cov_bd93501e30592.s['43']++;local.buildLib(options,onError);});__cov_bd93501e30592.s['44']++;local.testCase_buildReadme_default=(__cov_bd93501e30592.b['15'][0]++,local.testCase_buildReadme_default)||(__cov_bd93501e30592.b['15'][1]++,function(options,onError){__cov_bd93501e30592.f['11']++;__cov_bd93501e30592.s['45']++;options={};__cov_bd93501e30592.s['46']++;local.buildReadme(options,onError);});__cov_bd93501e30592.s['47']++;local.testCase_buildTest_default=(__cov_bd93501e30592.b['16'][0]++,local.testCase_buildTest_default)||(__cov_bd93501e30592.b['16'][1]++,function(options,onError){__cov_bd93501e30592.f['12']++;__cov_bd93501e30592.s['48']++;options={};__cov_bd93501e30592.s['49']++;local.buildTest(options,onError);});__cov_bd93501e30592.s['50']++;local.testCase_webpage_default=(__cov_bd93501e30592.b['17'][0]++,local.testCase_webpage_default)||(__cov_bd93501e30592.b['17'][1]++,function(options,onError){__cov_bd93501e30592.f['13']++;__cov_bd93501e30592.s['51']++;options={modeCoverageMerge:true,url:local.serverLocalHost+'?modeTest=1'};__cov_bd93501e30592.s['52']++;local.browserTest(options,onError);});__cov_bd93501e30592.s['53']++;local.testRunServer(local);__cov_bd93501e30592.s['54']++;break;}}());
+/* istanbul instrument in package npmtest_pjax */
+/*jslint
+    bitwise: true,
+    browser: true,
+    maxerr: 8,
+    maxlen: 96,
+    node: true,
+    nomen: true,
+    regexp: true,
+    stupid: true
+*/
+(function () {
+    'use strict';
+    var local;
+
+
+
+    // run shared js-env code - init-before
+    (function () {
+        // init local
+        local = {};
+        // init modeJs
+        local.modeJs = (function () {
+            try {
+                return typeof navigator.userAgent === 'string' &&
+                    typeof document.querySelector('body') === 'object' &&
+                    typeof XMLHttpRequest.prototype.open === 'function' &&
+                    'browser';
+            } catch (errorCaughtBrowser) {
+                return module.exports &&
+                    typeof process.versions.node === 'string' &&
+                    typeof require('http').createServer === 'function' &&
+                    'node';
+            }
+        }());
+        // init global
+        local.global = local.modeJs === 'browser'
+            ? window
+            : global;
+        switch (local.modeJs) {
+        // re-init local from window.local
+        case 'browser':
+            local = local.global.utility2.objectSetDefault(
+                local.global.utility2_rollup || local.global.local,
+                local.global.utility2
+            );
+            break;
+        // re-init local from example.js
+        case 'node':
+            local = (local.global.utility2_rollup || require('utility2'))
+                .requireReadme();
+            break;
+        }
+        // export local
+        local.global.local = local;
+    }());
+
+
+
+    // run shared js-env code - function
+    (function () {
+        return;
+    }());
+    switch (local.modeJs) {
+
+
+
+    // run browser js-env code - function
+    case 'browser':
+        break;
+
+
+
+    // run node js-env code - function
+    case 'node':
+        break;
+    }
+
+
+
+    // run shared js-env code - init-after
+    (function () {
+        return;
+    }());
+    switch (local.modeJs) {
+
+
+
+    // run browser js-env code - init-after
+    case 'browser':
+        local.testCase_browser_nullCase = local.testCase_browser_nullCase || function (
+            options,
+            onError
+        ) {
+        /*
+         * this function will test browsers's null-case handling-behavior-behavior
+         */
+            onError(null, options);
+        };
+
+        // run tests
+        local.nop(local.modeTest &&
+            document.querySelector('#testRunButton1') &&
+            document.querySelector('#testRunButton1').click());
+        break;
+
+
+
+    // run node js-env code - init-after
+    /* istanbul ignore next */
+    case 'node':
+        local.testCase_buildApidoc_default = local.testCase_buildApidoc_default || function (
+            options,
+            onError
+        ) {
+        /*
+         * this function will test buildApidoc's default handling-behavior-behavior
+         */
+            options = { modulePathList: module.paths };
+            local.buildApidoc(options, onError);
+        };
+
+        local.testCase_buildApp_default = local.testCase_buildApp_default || function (
+            options,
+            onError
+        ) {
+        /*
+         * this function will test buildApp's default handling-behavior-behavior
+         */
+            local.testCase_buildReadme_default(options, local.onErrorThrow);
+            local.testCase_buildLib_default(options, local.onErrorThrow);
+            local.testCase_buildTest_default(options, local.onErrorThrow);
+            local.testCase_buildCustomOrg_default(options, local.onErrorThrow);
+            options = [];
+            local.buildApp(options, onError);
+        };
+
+        local.testCase_buildCustomOrg_default = local.testCase_buildCustomOrg_default ||
+            function (options, onError) {
+            /*
+             * this function will test buildCustomOrg's default handling-behavior
+             */
+                options = {};
+                local.buildCustomOrg(options, onError);
+            };
+
+        local.testCase_buildLib_default = local.testCase_buildLib_default || function (
+            options,
+            onError
+        ) {
+        /*
+         * this function will test buildLib's default handling-behavior
+         */
+            options = {};
+            local.buildLib(options, onError);
+        };
+
+        local.testCase_buildReadme_default = local.testCase_buildReadme_default || function (
+            options,
+            onError
+        ) {
+        /*
+         * this function will test buildReadme's default handling-behavior-behavior
+         */
+            options = {};
+            local.buildReadme(options, onError);
+        };
+
+        local.testCase_buildTest_default = local.testCase_buildTest_default || function (
+            options,
+            onError
+        ) {
+        /*
+         * this function will test buildTest's default handling-behavior
+         */
+            options = {};
+            local.buildTest(options, onError);
+        };
+
+        local.testCase_webpage_default = local.testCase_webpage_default || function (
+            options,
+            onError
+        ) {
+        /*
+         * this function will test webpage's default handling-behavior
+         */
+            options = { modeCoverageMerge: true, url: local.serverLocalHost + '?modeTest=1' };
+            local.browserTest(options, onError);
+        };
+
+        // run test-server
+        local.testRunServer(local);
+        break;
+    }
+}());
 /* script-end /assets.test.js */
 
 
